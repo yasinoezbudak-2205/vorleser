@@ -1,5 +1,5 @@
 /* PDF-Vorleser – Offline-Speicher für die App-Dateien */
-const VERSION = '21fd7d1fdd';
+const VERSION = '15ab12748c';
 const SHELL = 'vorleser-shell-' + VERSION;
 const RUNTIME = 'vorleser-runtime-v1';
 const FILES = ["./", "index.html", "manifest.webmanifest", "icon-180.png", "icon-192.png", "icon-512.png", "tts-worker.js", "pocket-engine.js", "lib/pdf.min.js", "lib/pdf.worker.min.js", "engine/ort.wasm.min.js", "engine/piper_phonemize.js", "engine/piper_phonemize.wasm", "engine/ort-wasm-simd.wasm"];
@@ -23,8 +23,11 @@ self.addEventListener('fetch', e => {
   if(sameOrigin && url.pathname.endsWith('.wasm') && (url.pathname.includes('/pocket/') || url.pathname.includes('pp-data'))) return;   // large voice files: stored by the voice worker itself
   const fonts = url.hostname === 'fonts.googleapis.com' || url.hostname === 'fonts.gstatic.com';
   if(!sameOrigin && !fonts) return;
-  e.respondWith(caches.match(req, { ignoreSearch: true }).then(hit => hit || fetch(req).then(r => {
-    if(r.ok || r.type === 'opaque'){ const c = r.clone(); caches.open(sameOrigin ? SHELL : RUNTIME).then(x => x.put(req, c)); }
-    return r;
-  })));
+  const store = r => { if(r.ok || r.type === 'opaque'){ const c = r.clone(); caches.open(sameOrigin ? SHELL : RUNTIME).then(x => x.put(req, c)); } return r; };
+  if(sameOrigin && /\.(js|json|html|webmanifest)$/.test(url.pathname)){
+    // program files: fresh from the network when online, so updates arrive at once; offline from the store
+    e.respondWith(fetch(req).then(store).catch(() => caches.match(req, { ignoreSearch: true })));
+    return;
+  }
+  e.respondWith(caches.match(req, { ignoreSearch: true }).then(hit => hit || fetch(req).then(store)));
 });
