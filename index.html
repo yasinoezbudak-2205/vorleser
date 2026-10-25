@@ -1,0 +1,1855 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#0D1116">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Vorleser">
+<meta name="robots" content="noindex, nofollow">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="icon-180.png">
+<link rel="icon" type="image/png" sizes="192x192" href="icon-192.png">
+<style>:root{padding-top:env(safe-area-inset-top);padding-bottom:env(safe-area-inset-bottom)}body{margin:0;font:14px system-ui}img{max-width:100%}[hidden]{display:none!important}</style>
+</head>
+<body>
+<title>PDF-Vorleser</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700;12..96,800&family=IBM+Plex+Mono:wght@400;500&family=Literata:opsz,wght@7..72,400;7..72,500&display=swap">
+<script src="lib/pdf.min.js"></script>
+<style>
+/* Layout: a listening app. Home = library shelf of generated book covers with a "continue" hero;
+   player = full-screen sheet with cover or follow-along text; mini player docked at the bottom. */
+:root{
+  --bg:#0D1116; --surface:#151B22; --raise:#1D252F; --ink:#EDF0F2; --muted:#8D98A4; --line:#252E39;
+  --accent:#72C6B4; --accent-ink:#062019; --warn:#F2C46B; --scrim:rgb(4 8 12 / .62);
+  --f-display:"Bricolage Grotesque", ui-sans-serif, system-ui, sans-serif;
+  --f-read:"Literata", Georgia, "Times New Roman", serif;
+  --f-ui:system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --f-mono:"IBM Plex Mono", ui-monospace, Menlo, Consolas, monospace;
+  color-scheme:dark;
+}
+@media (prefers-color-scheme: light){ :root:not([data-theme="dark"]){
+  --bg:#F3F5F4; --surface:#FFFFFF; --raise:#E9EDEB; --ink:#131A20; --muted:#5C6671; --line:#DCE1DE;
+  --accent:#1B6B5D; --accent-ink:#FFFFFF; --warn:#8A5A00; --scrim:rgb(20 26 32 / .38); color-scheme:light } }
+:root[data-theme="light"]{
+  --bg:#F3F5F4; --surface:#FFFFFF; --raise:#E9EDEB; --ink:#131A20; --muted:#5C6671; --line:#DCE1DE;
+  --accent:#1B6B5D; --accent-ink:#FFFFFF; --warn:#8A5A00; --scrim:rgb(20 26 32 / .38); color-scheme:light }
+
+*{box-sizing:border-box}
+html,body{background:var(--bg)}
+body{color:var(--ink);font-family:var(--f-ui);font-size:15px;line-height:1.45;-webkit-tap-highlight-color:transparent;
+  padding-left:max(16px, env(safe-area-inset-left, 0px));padding-right:max(16px, env(safe-area-inset-right, 0px));padding-block:14px 120px}
+button{font:inherit;color:inherit;cursor:pointer;background:none;border:0;padding:0}
+button:focus-visible,input:focus-visible,select:focus-visible,textarea:focus-visible,.tile:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.wrap{max-width:980px;margin:0 auto;display:flex;flex-direction:column;gap:26px}
+.mono{font-family:var(--f-mono);font-variant-numeric:tabular-nums}
+.muted{color:var(--muted)}
+
+/* top bar */
+.top{display:flex;align-items:center;justify-content:space-between;gap:12px}
+.greet{font-family:var(--f-display);font-weight:800;font-size:clamp(26px,6.5vw,36px);letter-spacing:-.025em;margin:0;line-height:1.05}
+.round{width:40px;height:40px;border-radius:50%;background:var(--surface);border:1px solid var(--line);display:grid;place-items:center;flex:none}
+.round:hover{background:var(--raise)}
+.top-actions{display:flex;gap:8px}
+
+/* hero: continue listening */
+.hero{display:grid;grid-template-columns:auto 1fr;gap:16px;align-items:center;background:var(--surface);border:1px solid var(--line);border-radius:18px;padding:14px;cursor:pointer;text-align:left;width:100%}
+.hero:hover{background:var(--raise)}
+.hero .cover{width:104px}
+.hero-body{min-width:0;display:flex;flex-direction:column;gap:6px}
+.eyebrow{font-size:11px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--accent)}
+.hero-title{font-family:var(--f-display);font-weight:700;font-size:20px;line-height:1.15;letter-spacing:-.01em;overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;text-wrap:balance}
+.hero-meta{font-size:13px;color:var(--muted)}
+.hero-row{display:flex;align-items:center;gap:12px;margin-top:4px}
+.bar{height:4px;border-radius:4px;background:var(--line);overflow:hidden;flex:1}
+.bar i{display:block;height:100%;background:var(--accent);border-radius:4px}
+.playdot{width:46px;height:46px;border-radius:50%;background:var(--accent);color:var(--accent-ink);display:grid;place-items:center;flex:none}
+
+/* shelf */
+.sec-head{display:flex;align-items:baseline;justify-content:space-between;gap:12px;margin-bottom:12px}
+.sec-head h2{font-family:var(--f-display);font-weight:700;font-size:21px;margin:0;letter-spacing:-.01em}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(148px,1fr));gap:18px 14px}
+@media (max-width:420px){.grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
+.tile,.hero{-webkit-user-select:none;user-select:none;-webkit-touch-callout:none}
+.tile{display:flex;flex-direction:column;gap:7px;text-align:left;min-width:0;position:relative;border-radius:12px}
+.tile-name{font-weight:600;font-size:14px;line-height:1.25;overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical}
+.tile-meta{font-size:12px;color:var(--muted);font-variant-numeric:tabular-nums}
+.tile .bar{height:3px;flex:none}
+.tile-more{position:absolute;top:6px;right:6px;width:32px;height:32px;border-radius:50%;background:rgb(0 0 0 / .38);color:#fff;display:grid;place-items:center;backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px)}
+.tile.now .tile-name{color:var(--accent)}
+.add-tile .cover{background:var(--surface);border:1.5px dashed var(--line);display:grid;place-items:center;color:var(--muted)}
+.add-tile:hover .cover{border-color:var(--accent);color:var(--accent)}
+.empty{color:var(--muted);font-size:14px;max-width:60ch;margin:0}
+.foot{font-size:12px;color:var(--muted);max-width:60ch}
+
+/* generated cover */
+.cover{aspect-ratio:1/1;width:100%;max-width:100%;border-radius:10px;position:relative;overflow:hidden;color:#fff;box-shadow:0 6px 18px rgb(0 0 0 / .22);flex:none}
+.cover .shape{position:absolute;border-radius:50%;background:rgb(255 255 255 / .13);box-shadow:0 0 0 14px rgb(255 255 255 / .05)}
+.cover .ct{position:absolute;left:9%;right:9%;bottom:9%;font-family:var(--f-display);font-weight:800;line-height:1.02;letter-spacing:-.02em;text-wrap:balance;hyphens:auto;-webkit-hyphens:auto;overflow-wrap:break-word;overflow:hidden;display:-webkit-box;-webkit-line-clamp:4;-webkit-box-orient:vertical;text-shadow:0 1px 10px rgb(0 0 0 / .18)}
+.cover .cl{position:absolute;left:9%;top:8%;font-family:var(--f-mono);font-size:10px;letter-spacing:.14em;text-transform:uppercase;opacity:.82}
+
+/* mini player */
+.mini{position:fixed;left:0;right:0;bottom:0;z-index:30;padding-left:max(10px, env(safe-area-inset-left, 0px));padding-right:max(10px, env(safe-area-inset-right, 0px));padding-bottom:calc(10px + env(safe-area-inset-bottom, 0px))}
+.mini-in{max-width:980px;margin:0 auto;background:var(--raise);border:1px solid var(--line);border-radius:14px;display:flex;align-items:center;gap:10px;padding:8px 8px 8px 8px;position:relative;overflow:hidden;box-shadow:0 10px 30px rgb(0 0 0 / .3)}
+.mini .cover{width:44px;border-radius:7px;box-shadow:none}
+.mini .cover .ct{display:none}
+.mini .cover .cl{display:none}
+.mini-open{flex:1;min-width:0;text-align:left;display:flex;flex-direction:column}
+.mini-t{font-weight:600;font-size:14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.mini-s{font-size:12px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.mini-prog{position:absolute;left:10px;right:10px;bottom:0;height:2px;background:var(--line);border-radius:2px;overflow:hidden}
+.mini-prog i{display:block;height:100%;background:var(--accent)}
+.mini-play{width:44px;height:44px;border-radius:50%;display:grid;place-items:center;color:var(--ink)}
+
+/* full player */
+.player{position:fixed;inset:0;z-index:40;background:var(--bg);display:flex;flex-direction:column;
+  padding-top:env(safe-area-inset-top, 0px);padding-bottom:env(safe-area-inset-bottom, 0px);
+  padding-left:max(16px, env(safe-area-inset-left, 0px));padding-right:max(16px, env(safe-area-inset-right, 0px))}
+.player::before{content:"";position:absolute;inset:0;background:var(--tint, transparent);opacity:.32;pointer-events:none;
+  -webkit-mask-image:linear-gradient(to bottom, #000, transparent 70%);mask-image:linear-gradient(to bottom, #000, transparent 70%)}
+.pl{position:relative;max-width:560px;width:100%;margin:0 auto;flex:1;display:flex;flex-direction:column;gap:14px;min-height:0;padding-block:10px 16px}
+.pl-top{display:flex;align-items:center;justify-content:space-between;gap:10px}
+.pl-top .ctx{flex:1;min-width:0;text-align:center;font-size:12px;color:var(--muted)}
+.pl-top .ctx b{display:block;color:var(--ink);font-size:13px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.seg{display:inline-flex;background:var(--surface);border:1px solid var(--line);border-radius:999px;padding:3px}
+.seg button{padding:6px 12px;border-radius:999px;font-size:13px;font-weight:600;color:var(--muted)}
+.seg button[aria-pressed="true"]{background:var(--raise);color:var(--ink)}
+.stage{flex:1;min-height:0;display:flex;flex-direction:column}
+.stage-cover{flex:1;min-height:0;display:flex;flex-direction:column;justify-content:center;align-items:center;gap:16px}
+.stage-cover .cover{width:min(100%, 44vh, 400px);border-radius:14px}
+.stage-cover .cover .ct{font-size:clamp(22px,6vw,34px)}
+.caption{font-family:var(--f-read);font-size:16px;line-height:1.55;text-align:center;max-width:44ch;min-height:3.1em;color:var(--ink);opacity:.9;overflow:hidden;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical}
+.stage-text{flex:1;min-height:0;overflow-y:auto;-webkit-overflow-scrolling:touch;padding:4px 2px 40px;
+  -webkit-mask-image:linear-gradient(to bottom, transparent, #000 24px, #000 calc(100% - 48px), transparent);mask-image:linear-gradient(to bottom, transparent, #000 24px, #000 calc(100% - 48px), transparent)}
+#reader{font-family:var(--f-read);font-size:1.22rem;line-height:1.62;color:var(--muted)}
+#reader p{margin:0 0 1em}
+.s{cursor:pointer;border-radius:4px;transition:color .2s}
+.s:hover{color:var(--ink)}
+.s.cur{color:var(--ink);background:color-mix(in srgb, var(--accent) 16%, transparent);-webkit-box-decoration-break:clone;box-decoration-break:clone}
+.pagemark{font-family:var(--f-mono);font-size:11px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted);opacity:.7;display:flex;align-items:center;gap:10px;margin:1.4em 0 .8em}
+.pagemark::after{content:"";flex:1;height:1px;background:var(--line)}
+.follow{align-self:center;margin-top:-52px;position:relative;z-index:2;background:var(--ink);color:var(--bg);border-radius:999px;padding:8px 14px;font-size:13px;font-weight:600}
+.meta-row{display:flex;align-items:center;justify-content:space-between;gap:12px}
+.meta-row .t{min-width:0}
+.big-title{font-family:var(--f-display);font-weight:700;font-size:22px;letter-spacing:-.015em;line-height:1.15;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.voice-btn{font-size:14px;color:var(--muted);display:inline-flex;align-items:center;gap:6px;margin-top:2px}
+.voice-btn b{color:var(--accent);font-weight:600}
+.scrub{display:flex;flex-direction:column;gap:4px}
+input[type=range]{width:100%;accent-color:var(--accent);margin:0;height:22px}
+.times{display:flex;justify-content:space-between;font-size:12px;color:var(--muted)}
+.ctrls{display:flex;align-items:center;justify-content:space-between;gap:6px}
+.ic{width:48px;height:48px;border-radius:50%;display:grid;place-items:center;color:var(--ink);position:relative}
+.ic:hover{background:var(--surface)}
+.ic.on{color:var(--accent)}
+.ic small{position:absolute;bottom:-2px;left:50%;transform:translateX(-50%);font-size:10px;font-family:var(--f-mono);color:var(--accent);white-space:nowrap}
+.bigplay{width:72px;height:72px;border-radius:50%;background:var(--ink);color:var(--bg);display:grid;place-items:center}
+.bigplay:disabled{opacity:.5}
+.busy .bigplay,.busy .mini-play,.busy .playdot{animation:pulse 1.1s ease-in-out infinite}
+@keyframes pulse{50%{opacity:.5}}
+.pl-status{font-size:12px;color:var(--muted);text-align:center;min-height:1.3em}
+
+/* chapters */
+.meta-row .t{min-width:0;flex:1}
+.chap-line{display:inline-flex;align-items:center;gap:6px;font-size:11px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--accent);margin-bottom:3px}
+.chap-btn{width:44px;height:44px;flex:none}
+.pl-top .ctx span{display:block;font-size:11px;color:var(--muted);margin-top:1px}
+.crow{display:flex;align-items:center;gap:10px;padding:8px 8px;border-radius:12px}
+.crow.cur{background:var(--raise)}
+.cstat{width:34px;height:34px;border-radius:50%;flex:none;display:grid;place-items:center;font-family:var(--f-mono);font-size:12px;color:var(--muted);border:1.5px solid var(--line)}
+.crow.done .cstat{background:var(--accent);border-color:var(--accent);color:var(--accent-ink)}
+.crow.cur .cstat{border-color:var(--accent);color:var(--accent);background:none}
+.cmain{flex:1;min-width:0;text-align:left;display:flex;flex-direction:column;gap:3px;padding:2px 0}
+.ctitle{font-weight:600;font-size:15px;line-height:1.25;overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical}
+.crow.done:not(.cur) .ctitle{color:var(--muted)}
+.crow.cur .ctitle{color:var(--accent)}
+.cmeta{font-size:12px;color:var(--muted);font-variant-numeric:tabular-nums}
+.cdur{font-size:12px;color:var(--muted);font-family:var(--f-mono);white-space:nowrap;flex:none;font-variant-numeric:tabular-nums}
+.crow .bar{height:3px;flex:none;margin-top:4px}
+.eq{display:inline-flex;gap:2px;align-items:flex-end;height:12px}
+.eq i{width:3px;background:currentColor;border-radius:1px;height:6px;animation:eq 1s ease-in-out infinite}
+.eq i:nth-child(2){animation-delay:-.33s}.eq i:nth-child(3){animation-delay:-.66s}
+.eq.paused i{animation:none}
+@keyframes eq{0%,100%{height:3px}50%{height:12px}}
+.chap-sum{display:flex;gap:6px 16px;flex-wrap:wrap;font-size:13px;color:var(--muted);margin:0 0 12px}
+.chap-sum b{color:var(--ink);font-variant-numeric:tabular-nums}
+#reader .rh{font-family:var(--f-display);font-weight:700;font-size:1.05em;line-height:1.3;letter-spacing:-.01em;margin:1.5em 0 .6em}
+#reader .rh .s{color:var(--ink)}
+
+/* sheets */
+.scrim{position:fixed;inset:0;background:var(--scrim);z-index:50}
+.sheet{position:fixed;left:0;right:0;bottom:0;z-index:51;max-height:86vh;display:flex;flex-direction:column;
+  padding-left:max(0px, env(safe-area-inset-left, 0px));padding-right:max(0px, env(safe-area-inset-right, 0px))}
+.sheet-in{max-width:560px;width:100%;margin:0 auto;background:var(--surface);border:1px solid var(--line);border-bottom:0;border-radius:20px 20px 0 0;
+  display:flex;flex-direction:column;min-height:0;padding:10px 16px calc(18px + env(safe-area-inset-bottom, 0px));animation:up .22s ease-out}
+@keyframes up{from{transform:translateY(24px);opacity:.4}}
+.grab{width:38px;height:4px;border-radius:4px;background:var(--line);margin:0 auto 10px}
+.sheet h3{font-family:var(--f-display);font-weight:700;font-size:19px;margin:0 0 4px}
+.sheet .sub{font-size:13px;color:var(--muted);margin:0 0 12px;max-width:60ch}
+.sheet-body{overflow-y:auto;min-height:0;display:flex;flex-direction:column;gap:6px}
+.vgroup{font-size:11px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--muted);margin:12px 0 4px}
+.vrow{display:flex;align-items:center;gap:10px;padding:9px 10px;border-radius:12px;width:100%;text-align:left}
+.vrow:hover{background:var(--raise)}
+.vrow[aria-checked="true"]{background:var(--raise);box-shadow:inset 0 0 0 1.5px var(--accent)}
+.vav{width:38px;height:38px;border-radius:50%;display:grid;place-items:center;font-family:var(--f-display);font-weight:800;color:#fff;flex:none;font-size:16px}
+.vtxt{flex:1;min-width:0}
+.vtxt b{display:block;font-size:15px}
+.vtxt span{font-size:12px;color:var(--muted)}
+.vstate{font-size:11px;color:var(--muted);font-family:var(--f-mono);white-space:nowrap}
+.vstate.ok{color:var(--accent)}
+.vplay{width:36px;height:36px;border-radius:50%;border:1px solid var(--line);display:grid;place-items:center;flex:none}
+.vplay:hover{border-color:var(--accent);color:var(--accent)}
+.chips{display:flex;flex-wrap:wrap;gap:8px}
+.chip{padding:10px 14px;border-radius:999px;background:var(--raise);font-weight:600;font-size:14px;font-variant-numeric:tabular-nums}
+.chip[aria-pressed="true"]{background:var(--accent);color:var(--accent-ink)}
+.dl{height:4px;border-radius:4px;background:var(--line);overflow:hidden;margin-top:6px}
+.dl i{display:block;height:100%;background:var(--accent);width:0;transition:width .2s}
+.drop{display:flex;flex-direction:column;align-items:center;gap:6px;text-align:center;border:1.5px dashed var(--line);border-radius:14px;padding:26px 14px;cursor:pointer}
+.drop:hover,.drop.over{border-color:var(--accent)}
+.drop strong{font-family:var(--f-display);font-weight:700;font-size:18px}
+.drop span{font-size:13px;color:var(--muted)}
+.drop input{position:absolute;width:1px;height:1px;opacity:0;pointer-events:none}
+.check{display:flex;gap:8px;align-items:center;font-size:14px}
+.check input{accent-color:var(--accent);width:17px;height:17px}
+textarea,select{font:inherit;color:var(--ink);background:var(--bg);border:1px solid var(--line);border-radius:10px;padding:10px;width:100%}
+textarea{min-height:130px;resize:vertical;font-family:var(--f-read)}
+.btn{border-radius:999px;padding:10px 16px;font-weight:600;background:var(--raise)}
+.btn.primary{background:var(--accent);color:var(--accent-ink)}
+.btn.danger{color:var(--warn)}
+.row{display:flex;flex-wrap:wrap;gap:10px;align-items:center}
+.linkbox{display:flex;flex-wrap:wrap;gap:8px 10px;align-items:center;background:var(--bg);border-radius:12px;padding:10px 12px}
+.linkbox code{font-family:var(--f-mono);font-size:12px;overflow-wrap:anywhere;flex:1;min-width:0;user-select:all;-webkit-user-select:all}
+.steps{margin:12px 0 0;padding-left:20px;display:flex;flex-direction:column;gap:8px;font-size:14px;max-width:60ch}
+.toast{position:fixed;left:50%;transform:translateX(-50%);bottom:calc(86px + env(safe-area-inset-bottom, 0px));z-index:60;background:var(--ink);color:var(--bg);
+  border-radius:12px;padding:10px 14px;font-size:14px;max-width:min(92vw,520px);box-shadow:0 8px 24px rgb(0 0 0 / .3)}
+.toast.err{background:var(--warn);color:#1b1300}
+@media (prefers-reduced-motion: reduce){*{animation:none!important;transition:none!important;scroll-behavior:auto!important}}
+</style>
+
+<div class="wrap" id="home">
+  <div class="top">
+    <h1 class="greet" id="greet">Hallo</h1>
+    <div class="top-actions">
+      <button class="round" id="openApp" type="button" aria-label="Als App installieren" title="Als App installieren">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="6" y="2" width="12" height="20" rx="3"/><path d="M11 18h2"/></svg>
+      </button>
+      <button class="round" id="openAdd2" type="button" aria-label="PDF hinzufügen" title="PDF hinzufügen">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
+      </button>
+    </div>
+  </div>
+
+  <button class="hero" id="hero" type="button" hidden></button>
+
+  <section>
+    <div class="sec-head"><h2>Deine PDFs</h2><span class="muted" id="libNote" style="font-size:13px"></span></div>
+    <div class="grid" id="grid"></div>
+  </section>
+
+  <p class="foot" id="foot">Deine Bibliothek siehst nur du. Die Stimmen rechnen direkt auf deinem Gerät, ohne Credits.</p>
+</div>
+
+<div class="mini" id="mini" hidden>
+  <div class="mini-in">
+    <div class="cover" id="miniCover"></div>
+    <button class="mini-open" id="miniOpen" type="button"><span class="mini-t" id="miniT"></span><span class="mini-s" id="miniS"></span></button>
+    <button class="mini-play" id="miniPlay" type="button" aria-label="Vorlesen"></button>
+    <div class="mini-prog"><i id="miniProg"></i></div>
+  </div>
+</div>
+
+<div class="player" id="player" hidden role="dialog" aria-label="Player">
+  <div class="pl">
+    <div class="pl-top">
+      <button class="round" id="closePlayer" type="button" aria-label="Player schließen"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg></button>
+      <div class="ctx"><b id="plCtx"></b><span id="plTotal"></span></div>
+      <div class="seg" role="group" aria-label="Ansicht"><button type="button" id="viewCover" aria-pressed="true">Cover</button><button type="button" id="viewText" aria-pressed="false">Text</button></div>
+    </div>
+    <div class="stage">
+      <div class="stage-cover" id="stageCover"><div class="cover" id="bigCover"></div><div class="caption" id="caption"></div></div>
+      <div class="stage-text" id="stageText" hidden><article id="reader"></article></div>
+      <button class="follow" id="followBtn" type="button" hidden>Zur aktuellen Stelle</button>
+    </div>
+    <div class="meta-row">
+      <div class="t">
+        <button class="chap-line" id="chapLine" type="button" hidden><span id="chapEyebrow"></span><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.8" stroke-linecap="round" stroke-linejoin="round"><path d="m9 6 6 6-6 6"/></svg></button>
+        <div class="big-title" id="plTitle"></div>
+        <button class="voice-btn" id="voiceBtn" type="button">Stimme: <b id="voiceName">–</b> <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="m6 9 6 6 6-6"/></svg></button>
+      </div>
+      <button class="round chap-btn" id="chapBtn" type="button" aria-label="Kapitelübersicht" title="Kapitel"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M9 6h11M9 12h11M9 18h11"/><circle cx="4.5" cy="6" r="1.2" fill="currentColor" stroke="none"/><circle cx="4.5" cy="12" r="1.2" fill="currentColor" stroke="none"/><circle cx="4.5" cy="18" r="1.2" fill="currentColor" stroke="none"/></svg></button>
+    </div>
+    <div class="scrub">
+      <input type="range" id="seek" min="0" max="1000" step="1" value="0" aria-label="Position">
+      <div class="times mono"><span id="tPos">0:00</span><span id="tPage"></span><span id="tRest">-0:00</span></div>
+    </div>
+    <div class="ctrls">
+      <button class="ic" id="sleepBtn" type="button" aria-label="Sleeptimer"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 14.5A8 8 0 0 1 9.5 4a8 8 0 1 0 10.5 10.5Z"/></svg><small id="sleepLbl"></small></button>
+      <button class="ic" id="prev" type="button" aria-label="Vorheriger Satz"><svg width="26" height="26" viewBox="0 0 24 24" fill="currentColor"><path d="M6 5h2v14H6zM20 5v14L9.5 12z"/></svg></button>
+      <button class="bigplay" id="play" type="button" aria-label="Vorlesen"></button>
+      <button class="ic" id="next" type="button" aria-label="Nächster Satz"><svg width="26" height="26" viewBox="0 0 24 24" fill="currentColor"><path d="M16 5h2v14h-2zM4 5v14l10.5-7z"/></svg></button>
+      <button class="ic" id="speedBtn" type="button" aria-label="Tempo"><span class="mono" id="speedLbl" style="font-size:14px;font-weight:600">1×</span></button>
+    </div>
+    <div class="pl-status" id="plStatus" role="status"></div>
+  </div>
+</div>
+
+<div class="scrim" id="scrim" hidden></div>
+
+<div class="sheet" id="sheetVoice" hidden role="dialog" aria-label="Stimme wählen">
+  <div class="sheet-in"><div class="grab"></div>
+    <h3>Stimme</h3>
+    <p class="sub">Jede Stimme wird einmal geladen (im WLAN am besten) und läuft danach offline auf deinem Gerät. Tippe auf ▶ für eine Hörprobe.</p>
+    <div class="sheet-body" id="voiceList"></div>
+    <div class="vgroup">Ausdruck</div>
+    <div class="chips" id="exprChips">
+      <button class="chip" type="button" data-expr="0.7" aria-pressed="false">Ruhig</button>
+      <button class="chip" type="button" data-expr="1" aria-pressed="true">Normal</button>
+      <button class="chip" type="button" data-expr="1.35" aria-pressed="false">Lebhaft</button>
+    </div>
+  </div>
+</div>
+
+<div class="sheet" id="sheetSpeed" hidden role="dialog" aria-label="Tempo">
+  <div class="sheet-in"><div class="grab"></div>
+    <h3>Tempo</h3><p class="sub">Gilt ab dem nächsten Satz.</p>
+    <div class="chips" id="speedChips"></div>
+  </div>
+</div>
+
+<div class="sheet" id="sheetSleep" hidden role="dialog" aria-label="Sleeptimer">
+  <div class="sheet-in"><div class="grab"></div>
+    <h3>Sleeptimer</h3><p class="sub" id="sleepSub">Der Vorleser hört nach der gewählten Zeit von selbst auf.</p>
+    <div class="chips" id="sleepChips">
+      <button class="chip" type="button" data-sleep="0">Aus</button>
+      <button class="chip" type="button" data-sleep="5">5 min</button>
+      <button class="chip" type="button" data-sleep="15">15 min</button>
+      <button class="chip" type="button" data-sleep="30">30 min</button>
+      <button class="chip" type="button" data-sleep="45">45 min</button>
+      <button class="chip" type="button" data-sleep="60">1 Std.</button>
+      <button class="chip" type="button" data-sleep="chapter">Ende des Kapitels</button>
+      <button class="chip" type="button" data-sleep="page">Ende der Seite</button>
+    </div>
+  </div>
+</div>
+
+<div class="sheet" id="sheetChapters" hidden role="dialog" aria-label="Kapitel">
+  <div class="sheet-in"><div class="grab"></div>
+    <h3>Kapitel</h3>
+    <div class="chap-sum" id="chapSum"></div>
+    <div class="sheet-body" id="chapList"></div>
+  </div>
+</div>
+
+<div class="sheet" id="sheetAdd" hidden role="dialog" aria-label="PDF hinzufügen">
+  <div class="sheet-in"><div class="grab"></div>
+    <h3>PDF hinzufügen</h3><p class="sub">Die PDF wird ausgelesen und in deiner Bibliothek gespeichert.</p>
+    <div class="sheet-body">
+      <label class="drop" id="drop" for="file"><input type="file" id="file" accept="application/pdf,.pdf"><strong>PDF auswählen</strong><span>oder hierher ziehen · auch 300+ Seiten</span></label>
+      <div class="dl" id="loadBar" hidden><i></i></div>
+      <div class="muted" id="loadStatus" style="font-size:13px;min-height:1.2em"></div>
+      <label class="check"><input type="checkbox" id="skipNums" checked> Seitenzahlen, Kopf- und Fußzeilen weglassen</label>
+      <div class="vgroup">Oder Text einfügen</div>
+      <textarea id="pasteText" placeholder="Text hier einfügen …"></textarea>
+      <div class="row"><button class="btn primary" id="pasteGo" type="button">Text übernehmen</button></div>
+    </div>
+  </div>
+</div>
+
+<div class="sheet" id="sheetItem" hidden role="dialog" aria-label="Eintrag">
+  <div class="sheet-in"><div class="grab"></div>
+    <h3 id="itemTitle"></h3><p class="sub" id="itemSub"></p>
+    <div class="row"><button class="btn primary" id="itemPlay" type="button">Abspielen</button><button class="btn" id="itemRestart" type="button">Von vorn</button><button class="btn danger" id="itemDel" type="button">Entfernen</button></div>
+  </div>
+</div>
+
+<div class="sheet" id="sheetApp" hidden role="dialog" aria-label="Als App installieren">
+  <div class="sheet-in"><div class="grab"></div>
+    <h3>Als App installieren</h3>
+    <div class="sheet-body">
+      <div class="linkbox" hidden><code id="appLink"></code><button class="btn primary" id="copyLink" type="button">Link kopieren</button></div>
+      <ol class="steps">
+        <li>Öffne diese Seite in <b>Safari</b>.</li>
+        <li>Tippe unten auf <b>Teilen</b> (Quadrat mit Pfeil nach oben).</li>
+        <li>Wähle <b>Zum Home-Bildschirm</b> und tippe auf <b>Hinzufügen</b>.</li>
+        <li>Starte den Vorleser ab jetzt über das neue Symbol. Bibliothek und Stimmen bleiben auf deinem iPhone, er läuft auch ohne Internet.</li>
+      </ol>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast" hidden role="status"></div>
+
+<script>
+(() => {
+const $ = s => document.querySelector(s);
+const synth = window.speechSynthesis;
+const hasTTS = !!synth && typeof SpeechSynthesisUtterance !== 'undefined';
+const store = {
+  get(k,d){ try{ const v = localStorage.getItem('vl:'+k); return v == null ? d : JSON.parse(v); }catch(e){ return d; } },
+  set(k,v){ try{ localStorage.setItem('vl:'+k, JSON.stringify(v)); }catch(e){} }
+};
+const esc = s => String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const fmt = n => n.toLocaleString('de-DE');
+const CPS = 12.5; // default spoken characters per second at 1×, pauses included
+let cpsStats = store.get('cps2', {});
+function cpsBase(){
+  const n = curNeural(), s = cpsStats[n ? n.key : 'device'];
+  return s && s.n >= 5 ? Math.min(22, Math.max(7, s.c / s.t)) : CPS;
+}
+const cpsNow = () => cpsBase() * rate;
+function cpsLearn(chars, sec){
+  const n = curNeural(); if(!n || sec < 0.6) return;
+  const s = cpsStats[n.key] || { c:0, t:0, n:0 };
+  s.c += chars; s.t += sec * rate; s.n++;
+  if(s.n > 400){ s.c /= 2; s.t /= 2; s.n = 200; }
+  cpsStats[n.key] = s;
+  if(s.n % 10 === 0) store.set('cps2', cpsStats);
+}
+const CHECK = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="m5 12.5 4.5 4.5L19 7.5"/></svg>';
+
+const IC = {
+  play: '<svg width="26" height="26" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5.2v13.6a1 1 0 0 0 1.5.86l11-6.8a1 1 0 0 0 0-1.72l-11-6.8A1 1 0 0 0 8 5.2Z"/></svg>',
+  pause: '<svg width="26" height="26" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="5" width="4" height="14" rx="1"/><rect x="14" y="5" width="4" height="14" rx="1"/></svg>',
+  more: '<svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><circle cx="5" cy="12" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="19" cy="12" r="2"/></svg>',
+  plus: '<svg width="34" height="34" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>',
+  stop: '<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="2"/></svg>',
+  sm: '<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5.2v13.6a1 1 0 0 0 1.5.86l11-6.8a1 1 0 0 0 0-1.72l-11-6.8A1 1 0 0 0 8 5.2Z"/></svg>'
+};
+
+/* ---------- State ---------- */
+let doc = { name:'', key:null, pages:0, paras:[], sentences:[], cum:[0], paraEnd:new Set(), raw:[], libId:null, chapters:[], done:new Set() };
+let idx = 0, playing = false, token = 0, curEl = null, wake = null;
+let rate = store.get('rate', 1), expr = store.get('expr', 1);
+let follow = true, followPaused = false, view = store.get('view', 'cover');
+
+/* ---------- Voices ---------- */
+const VOICES = [
+  { key:'hoerbuch', model:'hoerbuch', name:'Hörbuch', desc:'männlich · Erzählstimme', mb:64, hue:'#7A4E2D', group:'h' },
+  { key:'mls-anna', model:'mls', speaker:'7479', name:'Anna', desc:'weiblich · lebendig erzählt', mb:77, hue:'#8A3D52', group:'h' },
+  { key:'mls-clara', model:'mls', speaker:'11772', name:'Clara', desc:'weiblich · klar und ruhig', mb:77, hue:'#6B3D8A', group:'h' },
+  { key:'mls-lena', model:'mls', speaker:'10819', name:'Lena', desc:'weiblich · warm', mb:77, hue:'#3D5E8A', group:'h' },
+  { key:'mls-marie', model:'mls', speaker:'5244', name:'Marie', desc:'weiblich · ausdrucksstark', mb:77, hue:'#8A5A3D', group:'h' },
+  { key:'mls-sophie', model:'mls', speaker:'8294', name:'Sophie', desc:'weiblich · sanft', mb:77, hue:'#3D8A73', group:'h' },
+  { key:'mls-hanna', model:'mls', speaker:'7906', name:'Hanna', desc:'weiblich · hell', mb:77, hue:'#8A3D7E', group:'h' },
+  { key:'miro', model:'miro', name:'Miro', desc:'männlich · klar und modern', mb:64, hue:'#2D5B7A', group:'w' },
+  { key:'dii', model:'dii', name:'Dii', desc:'weiblich · warm', mb:64, hue:'#7A2D5B', group:'w' },
+  { key:'emo-amused', model:'emotion', speaker:'amused', name:'Thorsten lebhaft', desc:'männlich · gut gelaunt', mb:77, hue:'#7A6A2D', group:'w' },
+  { key:'emo-surprised', model:'emotion', speaker:'surprised', name:'Thorsten überrascht', desc:'männlich · aufgeregt', mb:77, hue:'#7A3A2D', group:'w' },
+  { key:'emo-whisper', model:'emotion', speaker:'whisper', name:'Thorsten flüsternd', desc:'männlich · leise, spannend', mb:77, hue:'#3A2D7A', group:'w' },
+  { key:'emo-sleepy', model:'emotion', speaker:'sleepy', name:'Thorsten müde', desc:'männlich · zum Einschlafen', mb:77, hue:'#2D3A7A', group:'w' },
+  { key:'thorsten', model:'thorsten', name:'Thorsten', desc:'männlich · sachlich', mb:64, hue:'#2D7A5E', group:'w' }
+];
+const VBY = Object.fromEntries(VOICES.map(v => [v.key, v]));
+let neuralOK = typeof Worker !== 'undefined' && typeof (window.AudioContext || window.webkitAudioContext) !== 'undefined';
+let deviceVoices = [];
+let sel = migrateVoice(store.get('voice', null)); // 'n:<key>' or 'd:<voiceURI>'
+function migrateVoice(v){
+  if(!v) return neuralOK ? 'n:hoerbuch' : null;
+  if(v.startsWith('neural:')) v = 'n:' + v.slice(7);
+  if(v.startsWith('n:')) return VOICES.some(x => 'n:' + x.key === v) ? v : 'n:hoerbuch';
+  if(v.startsWith('d:')) return v;
+  return 'd:' + v;
+}
+const engine = () => sel && sel.startsWith('n:') ? 'neural' : 'device';
+const curNeural = () => engine() === 'neural' ? VBY[sel.slice(2)] || VBY.hoerbuch : null;
+const curDevice = () => { if(engine() !== 'device') return null; const u = sel.slice(2); const x = deviceVoices.find(x => x.v.voiceURI === u); return x ? x.v : null; };
+
+const NOVELTY = /^(Albert|Bad News|Bahh|Bells|Boing|Bubbles|Cellos|Deranged|Good News|Hysterical|Jester|Junior|Organ|Pipe Organ|Superstar|Trinoids|Whisper|Wobble|Zarvox|Fred|Ralph|Kathy|Princess)\b/i;
+function score(v){
+  const n = v.name; let s = 0;
+  if(/natural|neural/i.test(n)) s += 60;
+  if(/premium/i.test(n)) s += 55;
+  if(/enhanced|verbessert|erweitert/i.test(n)) s += 45;
+  if(/google/i.test(n)) s -= 25;
+  if(/espeak|compact|eloquence/i.test(n)) s -= 40;
+  if(/^(Eddy|Flo|Grandma|Grandpa|Reed|Rocko|Sandy|Shelley)\b/.test(n)) s -= 20;
+  if(NOVELTY.test(n)) s -= 60;
+  return s;
+}
+const prettyName = v => v.name.replace(/^Microsoft\s+/,'').replace(/\s+-\s+[^-]+\([^)]*\)\s*$/,'').trim();
+function loadDeviceVoices(){
+  const vs = hasTTS ? synth.getVoices() : [];
+  deviceVoices = vs.filter(v => /^de/i.test(v.lang || '')).map(v => ({ v, score: score(v) })).sort((a,b) => b.score - a.score || a.v.name.localeCompare(b.v.name));
+  if(!sel && deviceVoices[0]) sel = 'd:' + deviceVoices[0].v.voiceURI;
+  updateVoiceLabel();
+  if(!$('#sheetVoice').hidden) renderVoices();
+  return vs.length > 0;
+}
+function voiceLabel(){
+  const n = curNeural(); if(n) return n.name;
+  const d = curDevice(); return d ? prettyName(d) : 'keine';
+}
+function updateVoiceLabel(){ $('#voiceName').textContent = voiceLabel(); renderMini(); }
+
+/* ---------- Neural engine (worker) ---------- */
+const NV = { worker:null, ready:null, loading:null, waiters:[], reqs:new Map(), nextId:1, cache:new Map(), keyBase:'', ctx:null, src:null, cached:{}, prog:{} };
+function nWorker(){
+  if(NV.worker) return NV.worker;
+  try{ NV.worker = new Worker('tts-worker.js'); }
+  catch(e){ neuralOK = false; throw new Error('Neural-Stimmen werden in dieser Ansicht nicht unterstützt.'); }
+  NV.worker.onmessage = onWorkerMsg;
+  NV.worker.onerror = e => failLoad(e.message || 'Die Sprach-Engine konnte nicht starten.');
+  return NV.worker;
+}
+function onWorkerMsg(e){
+  const m = e.data;
+  if(m.type === 'progress'){
+    const model = NV.loading;
+    if(model){ NV.prog[model] = { label: m.label, loaded: m.loaded, total: m.total, cached: m.cached }; showLoadProgress(model); }
+  } else if(m.type === 'status'){
+    if(NV.loading) plStatus(m.text);
+  } else if(m.type === 'ready'){
+    NV.ready = m.voice; NV.loading = null; NV.cached[m.voice] = true; delete NV.prog[m.voice];
+    const w = NV.waiters; NV.waiters = []; w.forEach(x => x.res());
+    plStatus(''); if(!$('#sheetVoice').hidden) renderVoices();
+  } else if(m.type === 'loadError'){
+    failLoad(m.message);
+  } else if(m.type === 'audio' || m.type === 'error'){
+    const r = NV.reqs.get(m.id); if(!r) return;
+    NV.reqs.delete(m.id);
+    m.type === 'audio' ? r.res(m) : r.rej(new Error(m.message));
+  } else if(m.type === 'cached'){
+    if(m.value && NV.autoWarm === m.voice && !NV.ready && !NV.loading && !playing){ NV.autoWarm = null; loadModel(m.voice).catch(() => {}); }
+    NV.cached[m.voice] = m.value; if(!$('#sheetVoice').hidden) renderVoices();
+  }
+}
+function failLoad(msg){
+  const model = NV.loading; NV.loading = null; if(model) delete NV.prog[model];
+  const w = NV.waiters; NV.waiters = []; w.forEach(x => x.rej(new Error(msg)));
+  toast('Die Stimme konnte nicht geladen werden: ' + msg + ' Prüfe die Internetverbindung.', true);
+  plStatus(''); if(!$('#sheetVoice').hidden) renderVoices();
+}
+function loadModel(model){
+  if(NV.ready === model) return Promise.resolve();
+  return new Promise((res, rej) => {
+    NV.waiters.push({res, rej});
+    if(NV.loading !== model){
+      NV.loading = model; NV.ready = null;
+      try{ nWorker().postMessage({type:'load', voice: model}); }catch(e){ failLoad(e.message); }
+    }
+  });
+}
+function showLoadProgress(model){
+  const p = NV.prog[model]; if(!p) return;
+  const txt = p.cached ? `${p.label} aus dem Speicher …` : `Lade ${p.label}: ${(p.loaded/1e6).toFixed(0)} von ${(p.total/1e6).toFixed(0)} MB`;
+  plStatus(txt);
+  const row = document.querySelector(`.vrow[data-model="${model}"][aria-checked="true"] .dl i`) || document.querySelector(`.vrow[data-model="${model}"] .dl i`);
+  if(row) row.style.width = (p.loaded / p.total * 100).toFixed(1) + '%';
+  document.querySelectorAll(`.vrow[data-model="${model}"] .vstate`).forEach(s => { s.textContent = Math.round(p.loaded / p.total * 100) + ' %'; });
+}
+function ensureCtx(){
+  const AC = window.AudioContext || window.webkitAudioContext;
+  try{ if(navigator.audioSession) navigator.audioSession.type = 'playback'; }catch(e){}
+  unlockAudioEl();
+  try{
+    if(!NV.ctx) NV.ctx = new AC();
+    if(NV.ctx.state !== 'running') NV.ctx.resume().catch(() => {});
+    const b = NV.ctx.createBuffer(1, 1, 22050); const s = NV.ctx.createBufferSource(); s.buffer = b; s.connect(NV.ctx.destination); s.start();
+  }catch(e){}
+}
+const keyBase = () => { const n = curNeural(); return (n ? n.key : '') + '|' + rate + '|' + expr; };
+function nReset(){ NV.cache.clear(); NV.reqs.clear(); NV.keyBase = keyBase(); if(NV.worker) NV.worker.postMessage({type:'reset'}); }
+function synthReq(text, v){
+  const id = NV.nextId++;
+  return new Promise((res, rej) => {
+    NV.reqs.set(id, {res, rej});
+    nWorker().postMessage({type:'synth', id, voice: v.model, speaker: v.speaker || null, text, rate, expr});
+  });
+}
+function getAudio(i){
+  const key = keyBase() + '|' + i;
+  if(NV.cache.has(key)) return NV.cache.get(key);
+  const len = doc.sentences[i].t.length;
+  const p = synthReq(doc.sentences[i].t, curNeural());
+  const pad = doc.paraEnd.has(i) ? 0.5 : 0.18, arr = durArr();
+  p.then(r => { const sec = r.audio.length / r.sampleRate + pad; cpsLearn(len, sec); arr[i] = sec; }, () => NV.cache.delete(key));
+  NV.cache.set(key, p);
+  return p;
+}
+/* seconds per sentence: real length once the voice has computed it, otherwise an estimate */
+function durArr(){
+  const k = keyBase() + '|' + doc.sentences.length + '|' + (doc.key || doc.name);
+  if(NV.durKey !== k){ NV.durKey = k; NV.dur = new Float32Array(doc.sentences.length); }
+  return NV.dur;
+}
+function secBetween(a, b){
+  const arr = engine() === 'neural' ? durArr() : null, cps = cpsNow();
+  let s = 0;
+  for(let k = a; k < b; k++) s += (arr && arr[k]) || doc.sentences[k].t.length / cps;
+  return s;
+}
+const sentDur = i => secBetween(i, i + 1);
+function pruneCache(i){
+  const kb = keyBase();
+  for(const k of NV.cache.keys()){
+    const j = +k.slice(k.lastIndexOf('|') + 1);
+    if(!k.startsWith(kb + '|') || j < i - 1) NV.cache.delete(k);
+  }
+}
+const AHEAD_SEC = 240; // keep about four minutes of speech computed ahead
+function fillAhead(from){
+  const lim = AHEAD_SEC * cpsNow(); let chars = 0;
+  for(let k = from; k < doc.sentences.length && chars < lim; k++){ getAudio(k).catch(() => {}); chars += doc.sentences[k].t.length; }
+}
+
+/* sentences are joined into chunks (first one short for a quick start, then ~45 s) that never cross a chapter */
+const CH = { n: 0, next: null };
+function chunkRange(start, n){
+  const cEnd = doc.chapters[chapterOf(start)].end;
+  const lim = [0, 6, 20][n] ?? 45;
+  const limChars = lim * cpsNow();
+  let e = start, chars = 0;
+  do { chars += doc.sentences[e].t.length; e++; } while(e < cEnd && chars < limChars);
+  return e;
+}
+async function buildChunk(start, n){
+  const end = chunkRange(start, n), parts = [];
+  for(let i = start; i < end; i++) parts.push(getAudio(i));
+  const res = await Promise.all(parts);
+  const sr = res[0].sampleRate;
+  const pads = res.map((r, k) => Math.round(sr * (doc.paraEnd.has(start + k) ? 0.5 : 0.18)));
+  let total = 0; res.forEach((r, k) => { total += r.audio.length + pads[k]; });
+  const f32 = new Float32Array(total), offs = []; let o = 0;
+  res.forEach((r, k) => { offs.push(o / sr); f32.set(r.audio, o); o += r.audio.length + pads[k]; });
+  return { start, end, offs, dur: total / sr, sr, f32, blob: wavBlob(f32, sr, 0) };
+}
+
+/* audio element: keeps playing with a locked iPhone screen, ignores the mute switch */
+const AE = { el:null, ok:true, url:null };
+function wavBlob(f32, sr, padSec){
+  const n = f32.length + Math.round(sr * padSec);
+  const buf = new ArrayBuffer(44 + n * 2), v = new DataView(buf);
+  const w = (o, s) => { for(let i=0;i<s.length;i++) v.setUint8(o+i, s.charCodeAt(i)); };
+  w(0,'RIFF'); v.setUint32(4, 36 + n*2, true); w(8,'WAVE'); w(12,'fmt ');
+  v.setUint32(16,16,true); v.setUint16(20,1,true); v.setUint16(22,1,true); v.setUint32(24,sr,true); v.setUint32(28,sr*2,true); v.setUint16(32,2,true); v.setUint16(34,16,true);
+  w(36,'data'); v.setUint32(40, n*2, true);
+  const i16 = new Int16Array(buf, 44, f32.length);
+  for(let i=0;i<f32.length;i++){ const s = f32[i] < -1 ? -1 : f32[i] > 1 ? 1 : f32[i]; i16[i] = s < 0 ? s * 32768 : s * 32767; }
+  return new Blob([buf], {type:'audio/wav'});
+}
+function audioEl(){
+  if(!AE.el){
+    const a = new Audio(); a.preload = 'auto'; a.setAttribute('playsinline', '');
+    a.addEventListener('timeupdate', () => { if(playing) trackChunk(); });
+    AE.el = a;
+  }
+  return AE.el;
+}
+function unlockAudioEl(){
+  if(!AE.ok || NV.src) return;   // never interrupt a chunk that is playing
+  try{
+    const a = audioEl(); a.onended = null; a.onerror = null;
+    if(AE.url) URL.revokeObjectURL(AE.url);
+    AE.url = URL.createObjectURL(wavBlob(new Float32Array(0), 22050, 0.05));
+    a.src = AE.url; a.play().catch(() => {});
+  }catch(e){ AE.ok = false; }
+}
+function chunkClock(){ return NV.src && NV.src.clock ? NV.src.clock() : 0; }
+function playChunk(ch, onend){
+  NV.chunk = ch;
+  if(AE.ok){
+    const a = audioEl();
+    const mine = { stop(){ a.onended = null; a.onerror = null; try{ a.pause(); }catch(e){} }, clock: () => a.currentTime || 0 };
+    NV.src = mine;
+    if(AE.url) URL.revokeObjectURL(AE.url);
+    AE.url = URL.createObjectURL(ch.blob);
+    const fallback = () => { if(NV.src !== mine) return; AE.ok = false; NV.src = null; playChunkWA(ch, onend); };
+    a.onended = () => { if(NV.src === mine){ NV.src = null; onend && onend(); } };
+    a.onerror = fallback;
+    a.src = AE.url; a.volume = 1;
+    const pr = a.play(); if(pr && pr.catch) pr.catch(fallback);
+    return;
+  }
+  playChunkWA(ch, onend);
+}
+function playChunkWA(ch, onend){
+  const ctx = NV.ctx;
+  const buf = ctx.createBuffer(1, Math.max(1, ch.f32.length), ch.sr); buf.getChannelData(0).set(ch.f32);
+  const src = ctx.createBufferSource(); src.buffer = buf; src.connect(ctx.destination);
+  const t0 = ctx.currentTime;
+  const mine = { stop(){ src.onended = null; try{ src.stop(); }catch(e){} }, clock: () => ctx.currentTime - t0 };
+  src.onended = () => { if(NV.src === mine){ NV.src = null; onend && onend(); } };
+  NV.src = mine; src.start();
+}
+function playBuffer(res, padSec, onend){
+  const pad = Math.round(res.sampleRate * padSec), f32 = new Float32Array(res.audio.length + pad); f32.set(res.audio);
+  playChunk({ start: -1, end: -1, offs: [0], dur: f32.length / res.sampleRate, sr: res.sampleRate, f32, blob: wavBlob(f32, res.sampleRate, 0) }, onend);
+}
+function stopNeuralAudio(){ const s = NV.src; NV.src = null; NV.chunk = null; if(s){ try{ s.stop(); }catch(e){} } }
+function trackChunk(){
+  const ch = NV.chunk; if(!ch || ch.start < 0 || !NV.src || engine() !== 'neural') return;
+  const t = chunkClock(); let k = 0;
+  while(k + 1 < ch.offs.length && ch.offs[k + 1] <= t + 0.05) k++;
+  const ni = ch.start + k;
+  if(ni > idx && ni < ch.end) sentenceTo(ni);
+}
+async function nPlay(i){
+  const my = token;
+  mark(i, true);
+  const t = setTimeout(() => { if(my === token) setBusy(true); }, 350);
+  let ch;
+  try{
+    await loadModel(curNeural().model);
+    if(my !== token) return;
+    const kb = keyBase(), nx = CH.next; CH.next = null;
+    ch = nx && nx.start === i && nx.key === kb ? await nx.p : await buildChunk(i, CH.n);
+  }catch(e){
+    clearTimeout(t); setBusy(false);
+    if(my !== token) return;
+    toast('Die Stimme ist nicht bereit: ' + e.message, true);
+    stop(); return;
+  }
+  clearTimeout(t); setBusy(false);
+  if(my !== token || !playing) return;
+  CH.n++;
+  pruneCache(i);
+  fillAhead(ch.end);
+  if(ch.end < doc.sentences.length){ const p = buildChunk(ch.end, CH.n); p.catch(() => {}); CH.next = { start: ch.end, key: keyBase(), p }; }
+  playChunk(ch, () => { if(my === token && playing && sentenceTo(ch.end)) nPlay(ch.end); });
+  updatePositionState(true);
+}
+
+/* ---------- Text extraction ---------- */
+async function extractLines(page){
+  const tc = await page.getTextContent();
+  const lines = []; let cur = null;
+  for(const it of tc.items){
+    if(!it || typeof it.str !== 'string') continue;
+    const x = it.transform[4], y = it.transform[5];
+    const h = Math.abs(it.transform[3]) || it.height || 10;
+    if(it.str.length){
+      if(!cur || Math.abs(y - cur.y) > Math.max(h, cur.h) * 0.45){
+        if(cur) lines.push(cur);
+        cur = { t: it.str, y, h, xEnd: x + (it.width||0) };
+      } else {
+        const gap = x - cur.xEnd;
+        if(gap > h * 0.12 && !/\s$/.test(cur.t) && !/^\s/.test(it.str)) cur.t += ' ';
+        cur.t += it.str; cur.xEnd = x + (it.width||0); cur.h = Math.max(cur.h, h);
+      }
+    }
+    if(it.hasEOL && cur){ lines.push(cur); cur = null; }
+  }
+  if(cur) lines.push(cur);
+  return lines.map(l => ({...l, t: l.t.replace(/\s+/g,' ').trim()})).filter(l => l.t);
+}
+const isPageNum = t => /^(seite|page|s\.)?\s*[-–]?\s*\d{1,4}\s*[-–]?(\s*(\/|von|of)\s*\d{1,4})?$/i.test(t);
+const normLine = t => t.replace(/\d+/g,'#').replace(/\s+/g,' ').trim().toLowerCase();
+function stripHeaders(pages){
+  if(pages.length < 4) return pages;
+  const counts = new Map();
+  pages.forEach(lines => {
+    const edge = new Set([...lines.slice(0,2), ...lines.slice(-2)].map(l => normLine(l.t)));
+    edge.forEach(k => counts.set(k, (counts.get(k)||0) + 1));
+  });
+  const thr = Math.max(3, Math.ceil(pages.length * 0.4));
+  const bad = new Set([...counts].filter(([k,c]) => c >= thr && k.length < 120).map(([k]) => k));
+  return pages.map(lines => lines.filter((l,i) => !((i < 2 || i >= lines.length - 2) && bad.has(normLine(l.t)))));
+}
+function joinLine(a, b){
+  if(/[A-Za-zÄÖÜäöüß]-$/.test(a) && /^[a-zäöüß]/.test(b)) return a.slice(0,-1) + b;
+  return a + ' ' + b;
+}
+const KW1 = /^(kapitel|teil|abschnitt|buch|band|lektion|chapter|part|book)\s+([0-9]{1,3}|[ivxlcdm]{1,7}|eins|zwei|drei|vier|fünf|sechs|sieben|acht|neun|zehn|elf|zwölf|[a-zäöü]+te[rsn]?)\b/i;
+const KW2 = /^(prolog|epilog|vorwort|geleitwort|einleitung|einführung|nachwort|anhang|schlusswort|schluss|danksagung|zusammenfassung|fazit|ausblick|literaturverzeichnis|literatur|quellen|glossar|inhaltsverzeichnis|abstract|introduction|conclusion|references)\b/i;
+const NUMHEAD = /^(\d{1,2}(\.\d{1,2}){0,2}\.?|[IVX]{1,5}\.)\s+[A-ZÄÖÜ]/;
+const isKw = t => (KW1.test(t) && t.length <= 90) || (KW2.test(t) && t.length <= 45);
+function cleanTitle(t){
+  t = String(t || '').replace(/^#+\s*/, '').replace(/\s*(\.{2,}|…+|(\s\.){2,})\s*\d{0,4}\s*$/, '').replace(/\s+/g, ' ').trim();
+  if(t.length > 90) t = t.slice(0, 87).replace(/\s+\S*$/, '') + ' …';
+  return t || 'Ohne Titel';
+}
+function headLine(l, bodyH, prevEnds){
+  const t = l.t;
+  if(t.length > 110 || !/\p{L}.*\p{L}/u.test(t)) return null;
+  if(/(\.{3,}|…{2,}|(\s\.){3,})/.test(t)) return null;            // leader dots of a table of contents
+  const r = l.h / (bodyH || l.h);
+  if(/\s\d{1,4}$/.test(t) && r < 1.12) return null;                // table of contents line with page number
+  if(r >= 1.18 && t.length <= 100) return { r, kw: isKw(t) };
+  if(isKw(t) && t.length <= 60 && prevEnds && !/[,;]$/.test(t)) return { r, kw: true };
+  if(r >= 1.08 && NUMHEAD.test(t) && t.length <= 80 && !/[.,;:]$/.test(t)) return { r, kw: false };
+  return null;
+}
+function bodyHeight(pages){
+  const m = new Map();
+  for(const lines of pages) for(const l of lines){ const h = Math.round(l.h * 10) / 10; m.set(h, (m.get(h) || 0) + l.t.length); }
+  let best = 10, bn = -1;
+  for(const [h, n] of m) if(n > bn){ bn = n; best = h; }
+  return best;
+}
+function paragraphize(lines, bodyH){
+  if(!lines.length) return [];
+  const gaps = [];
+  for(let i=1;i<lines.length;i++){ const g = lines[i-1].y - lines[i].y; if(g > 0) gaps.push(g); }
+  gaps.sort((a,b) => a-b);
+  const med = gaps.length ? gaps[Math.floor(gaps.length/2)] : 12;
+  const maxLen = Math.max(...lines.map(l => l.t.length));
+  const ends = t => /[.!?:]["”»)]?$/.test(t);
+  const out = []; let cur = null;
+  for(let i=0;i<lines.length;i++){
+    const l = lines[i], prev = lines[i-1];
+    const hl = bodyH ? headLine(l, bodyH, !prev || prev.head || ends(prev.t)) : null;
+    if(hl){
+      l.head = true;
+      const g = prev ? prev.y - l.y : 0;
+      if(cur && cur.head && Math.abs(cur.r - hl.r) < 0.08 && g > 0 && g < l.h * 2.4){ cur.text = joinLine(cur.text, l.t); continue; }
+      if(cur) out.push(cur);
+      cur = { text: l.t, head: true, r: hl.r, kw: hl.kw, y: l.y };
+      continue;
+    }
+    if(!cur || cur.head){ if(cur) out.push(cur); cur = { text: l.t, y: l.y }; continue; }
+    const g = prev.y - l.y;
+    const brk = g > med * 1.45 || g < -med * 0.5 || (prev.t.length < maxLen * 0.6 && ends(prev.t));
+    if(brk){ out.push(cur); cur = { text: l.t, y: l.y }; } else cur.text = joinLine(cur.text, l.t);
+  }
+  if(cur) out.push(cur);
+  return out.map(p => ({ ...p, text: p.text.replace(/\s?(\.\s?){4,}/g, ' – ').replace(/\s+/g,' ').trim() })).filter(p => /[\p{L}\d]/u.test(p.text));
+}
+function pickHeadings(paras){
+  const heads = paras.filter(p => p.head);
+  if(!heads.length) return;
+  const levels = [...new Set(heads.filter(h => !h.kw).map(h => Math.round(h.r * 20) / 20))].sort((a,b) => b - a);
+  let T = Infinity;
+  const lv = h => Math.round(h.r * 20) / 20;
+  for(const b of levels){ if(heads.filter(h => h.kw || lv(h) >= b).length >= 3){ T = b; break; } }
+  let chosen = heads.filter(h => h.kw || lv(h) >= T);
+  if(chosen.length > 160) chosen = heads.filter(h => h.kw);
+  chosen.forEach(h => { h.h = 1; });
+}
+async function outlineMarks(pdf){
+  let ol = null;
+  try{ ol = await pdf.getOutline(); }catch(e){ return null; }
+  if(!ol || !ol.length) return null;
+  let items = ol;
+  if(items.length < 3){ const kids = items.flatMap(i => i.items || []); if(kids.length >= 3) items = kids; }
+  const res = [];
+  for(const it of items){
+    try{
+      let dest = it.dest;
+      if(typeof dest === 'string') dest = await pdf.getDestination(dest);
+      if(!Array.isArray(dest) || dest[0] == null) continue;
+      const pi = typeof dest[0] === 'object' ? await pdf.getPageIndex(dest[0]) : (Number.isInteger(dest[0]) ? dest[0] : null);
+      if(pi == null) continue;
+      const y = dest[1] && dest[1].name === 'XYZ' && typeof dest[3] === 'number' ? dest[3] : null;
+      res.push({ title: String(it.title || '').trim(), page: pi + 1, y });
+    }catch(e){}
+  }
+  res.sort((a,b) => a.page - b.page || (b.y ?? 1e9) - (a.y ?? 1e9));
+  return res.length >= 2 ? res : null;
+}
+function applyOutline(paras, marks){
+  const nt = t => String(t).toLowerCase().replace(/[^\p{L}\p{N}]+/gu, '');
+  let from = 0, used = 0;
+  for(const m of marks){
+    const key = nt(m.title).slice(0, 24);
+    let hit = -1, yHit = -1, first = -1;
+    for(let i = from; i < paras.length; i++){
+      const p = paras[i];
+      if(p.page < m.page) continue;
+      if(p.page > m.page){ if(first < 0) first = i; break; }
+      if(first < 0) first = i;
+      const pt = nt(p.text).slice(0, 40);
+      if(key.length >= 3 && (pt.startsWith(key) || (pt.length >= 4 && key.startsWith(pt)))){ hit = i; break; }
+      if(m.y != null && yHit < 0 && p.y != null && p.y <= m.y + 3) yHit = i;
+    }
+    const at = hit >= 0 ? hit : yHit >= 0 ? yHit : first;
+    if(at < 0 || paras[at].ch) continue;
+    paras[at].ch = cleanTitle(m.title); paras[at].h = 1; from = at; used++;
+  }
+  return used;
+}
+function textHead(t){
+  if(t.length <= 70 && isKw(t) && !/[.,;]$/.test(t)) return t;
+  if(/^(kapitel|chapter)\s+\S+/i.test(t) && KW1.test(t)){
+    const rest = t.slice(0, 70), cut = rest.search(/[.!?]\s/);
+    return cut > 0 ? rest.slice(0, cut) : rest.replace(/\s+\S*$/, '') + ' …';
+  }
+  return null;
+}
+const seg = (typeof Intl !== 'undefined' && Intl.Segmenter) ? new Intl.Segmenter('de', {granularity:'sentence'}) : null;
+const ABBR = /(?:\b[a-zäöü]|\b(?:vgl|bzw|ca|nr|abs|art|dr|prof|etc|usw|inkl|ggf|evtl|bspw|zzgl|hr|fr|st|mio|mrd|tel|jh|kap|abb|tab|bd|hrsg|ff|sog|max|min|mind|z\.b|d\.h|u\.a|o\.ä|i\.d\.r)|\b\d{1,3})\.$/i;
+function splitSentences(p){
+  const parts = seg
+    ? [...seg.segment(p)].map(s => s.segment.trim()).filter(Boolean)
+    : (p.match(/[^.!?…]+[.!?…]+["»“”')\]]*|[^.!?…]+$/g) || [p]).map(s => s.trim()).filter(Boolean);
+  const merged = [];
+  for(const s of parts){
+    const prev = merged[merged.length-1];
+    if(prev && (s.length < 4 || ABBR.test(prev))) merged[merged.length-1] = prev + ' ' + s;
+    else merged.push(s);
+  }
+  const res = [];
+  for(const s of merged){
+    let rest = s;
+    while(rest.length > 260){
+      let cut = -1;
+      for(const ch of ['; ', ': ', ', ', ' – ', ' ']){ const k = rest.lastIndexOf(ch, 240); if(k > 80){ cut = k + ch.length; break; } }
+      if(cut < 0) cut = 240;
+      res.push(rest.slice(0, cut).trim()); rest = rest.slice(cut).trim();
+    }
+    if(rest) res.push(rest);
+  }
+  return res;
+}
+
+function build(rawParas, meta){
+  const paras = [];
+  for(const p of rawParas){
+    const prev = paras[paras.length-1];
+    if(prev && !prev.h && !p.h && prev.page !== p.page && !/[.!?:;"”»)]$/.test(prev.text) && /^[a-zäöüß]/.test(p.text)){ prev.text = joinLine(prev.text, p.text); continue; }
+    paras.push({...p});
+  }
+  const flagged = paras.some(p => p.h);
+  const sentences = [], outParas = [], cum = [0], heads = [];
+  for(const p of paras){
+    const ids = [], first = sentences.length;
+    for(const t of splitSentences(p.text)){ ids.push(sentences.length); sentences.push({t, page:p.page}); cum.push(cum[cum.length-1] + t.length); }
+    if(!ids.length) continue;
+    outParas.push({page:p.page, s:ids, h: !!p.h});
+    if(p.h) heads.push({ start: first, title: p.ch || p.text, page: p.page, len: cum[cum.length-1] - cum[first] });
+    else if(!flagged && !meta.v2){ const tt = textHead(p.text); if(tt) heads.push({ start: first, title: tt, page: p.page, len: 0 }); }
+  }
+  stop();
+  doc = { ...meta, paras: outParas, sentences, cum, paraEnd: new Set(outParas.map(p => p.s[p.s.length-1])), raw: rawParas, libId: meta.key ? libIdFor(meta.key) : null };
+  doc.chapters = makeChapters(heads, doc);
+  doc.done = new Set((meta.done || (doc.key ? store.get('done:' + doc.key, []) : [])).filter(i => i >= 0 && i < doc.chapters.length));
+  nReset();
+  const saved = doc.key ? store.get('pos:'+doc.key, 0) : 0;
+  idx = (saved > 0 && saved < sentences.length) ? saved : 0;
+  renderReader();
+  renderPlayerMeta();
+  mark(idx, false);
+  if(!meta.sample) $('#mini').hidden = false;
+  renderLib();
+}
+function makeChapters(heads, d){
+  const n = d.sentences.length, at = i => d.cum[i] || 0, total = at(n);
+  const merged = [];
+  for(const h of heads.slice().sort((a,b) => a.start - b.start)){
+    const last = merged[merged.length - 1];
+    if(last && h.start === last.start) continue;
+    if(last && at(h.start) - at(last.start) - last.len < 40){ last.parts.push(cleanTitle(h.title)); last.len += h.len; continue; }
+    merged.push({ start: h.start, parts: [cleanTitle(h.title)], len: h.len, page: h.page });
+  }
+  let ch = merged.map(m => ({ start: m.start, title: m.parts.slice(-2).join(' · '), page: m.page }));
+  if(ch.length && ch[0].start > 0){
+    if(at(ch[0].start) >= 400) ch.unshift({ start: 0, title: 'Anfang', page: d.sentences[0].page });
+    else ch[0].start = 0;
+  }
+  if(ch.length < 2 || ch.length > 200){
+    ch = total / CPS > 25 * 60 ? chunkChapters(d, 15 * 60 * CPS) : [{ start: 0, title: d.name || 'Text', page: (d.sentences[0] || {}).page || 1, whole: true }];
+  }
+  for(let i = 0; i < ch.length; i++){
+    ch[i].end = i + 1 < ch.length ? ch[i+1].start : n;
+    ch[i].chars = at(ch[i].end) - at(ch[i].start);
+    ch[i].pageEnd = (d.sentences[ch[i].end - 1] || {}).page || ch[i].page;
+  }
+  return ch.filter(c => c.end > c.start);
+}
+function chunkChapters(d, target){
+  const n = d.sentences.length, total = d.cum[n];
+  const parts = Math.max(2, Math.round(total / target)), size = total / parts;
+  const ends = [...d.paraEnd].sort((a,b) => a - b), starts = [0];
+  for(let k = 1; k < parts; k++){
+    const goal = k * size; let best = -1, bd = Infinity;
+    for(const e of ends){ const dd = Math.abs(d.cum[e + 1] - goal); if(dd < bd){ bd = dd; best = e + 1; } }
+    if(best > starts[starts.length - 1] && best < n) starts.push(best);
+  }
+  return starts.map((st, i) => ({ start: st, title: `Abschnitt ${i + 1}`, page: d.sentences[st].page, auto: true }));
+}
+function chapterOf(i, d = doc){
+  const c = d.chapters; if(!c || !c.length) return 0;
+  let lo = 0, hi = c.length - 1;
+  while(lo < hi){ const mid = (lo + hi + 1) >> 1; if(c[mid].start <= i) lo = mid; else hi = mid - 1; }
+  return lo;
+}
+function markChapterDone(ci){
+  if(ci < 0 || !doc.chapters[ci] || doc.done.has(ci)) return;
+  doc.done.add(ci); saveDone();
+}
+function toggleDone(ci){
+  if(doc.done.has(ci)) doc.done.delete(ci); else doc.done.add(ci);
+  saveDone();
+}
+function saveDone(){
+  const arr = [...doc.done].sort((a,b) => a - b);
+  if(doc.key) store.set('done:' + doc.key, arr);
+  if(!$('#sheetChapters').hidden) renderChapters();
+  if(LIB.ready && doc.libId){
+    const id = doc.libId;
+    libWrite(() => LIB.col.doc(id).update({ done: arr, chapters: doc.chapters.length, updatedAt: nowIso() }));
+  }
+}
+const NUMBERED = /^(kapitel|chapter|abschnitt|teil|part|buch|book|lektion|\d{1,3}[.\s])/i;
+function chapPos(ci, n, title, auto, long){
+  if(NUMBERED.test(title || '')) return long ? `${title} (${ci + 1}/${n})` : `${ci + 1} von ${n}`;
+  const w = auto ? 'Abschnitt' : 'Kapitel';
+  return long ? `${w} ${ci + 1} von ${n}: ${title}` : `${w} ${ci + 1} von ${n}`;
+}
+const durShort = sec => { sec = Math.max(0, sec); const m = Math.round(sec / 60); if(m >= 60) return `${Math.floor(m / 60)}:${String(m % 60).padStart(2, '0')} Std.`; return `${Math.max(1, m)} Min.`; };
+function renderChapters(){
+  const ch = doc.chapters; if(!ch || !ch.length) return;
+  const ci = chapterOf(idx), n = doc.sentences.length;
+  const within = liveWithin(), all = secBetween(0, n), rest = secBetween(idx, n) - within;
+  const word = ch.length === 1 ? 'Kapitel' : ch[0].auto ? 'Abschnitte' : 'Kapitel';
+  $('#sheetChapters h3').textContent = ch[0].auto ? 'Abschnitte' : 'Kapitel';
+  $('#chapSum').innerHTML = `<span><b>${ch.length}</b> ${word}</span><span><b>${doc.done.size}</b> abgeschlossen</span><span>noch <b>${durTxt(rest)}</b> von ${durTxt(all)}</span>`;
+  const list = $('#chapList'), top = list.scrollTop;
+  list.innerHTML = ch.map((c, i) => {
+    const isCur = i === ci, isDone = doc.done.has(i);
+    let meta = doc.pages > 1 ? (c.pageEnd > c.page ? `S. ${c.page}–${c.pageEnd}` : `S. ${c.page}`) : '';
+    let bar = '';
+    const cdur = secBetween(c.start, c.end);
+    if(isCur){
+      const el = secBetween(c.start, idx) + within, f = el / Math.max(1, cdur);
+      meta = `${playing ? 'läuft' : 'hier warst du'} · noch ${durTxt(cdur - el)}${meta ? ' · ' + meta : ''}`;
+      bar = `<span class="bar"><i style="width:${(f * 100).toFixed(1)}%"></i></span>`;
+    } else if(isDone) meta = 'abgeschlossen' + (meta ? ' · ' + meta : '');
+    const stat = isCur ? `<span class="eq${playing ? '' : ' paused'}"><i></i><i></i><i></i></span>` : isDone ? CHECK : (i + 1);
+    return `<div class="crow${isCur ? ' cur' : ''}${isDone ? ' done' : ''}" data-ch="${i}">
+      <button class="cstat" type="button" data-toggle="${i}" aria-label="${isDone ? 'Als nicht gehört markieren' : 'Als gehört markieren'}">${stat}</button>
+      <button class="cmain" type="button" data-jump="${i}"><span class="ctitle">${esc(c.title)}</span>${meta ? `<span class="cmeta">${meta}</span>` : ''}${bar}</button>
+      <span class="cdur">${durShort(cdur)}</span>
+    </div>`;
+  }).join('');
+  list.scrollTop = top;
+}
+let shownCh = -1;
+function renderChapterMeta(){
+  const ch = doc.chapters, ci = chapterOf(idx), c = ch[ci], multi = ch.length > 1;
+  $('#chapLine').hidden = !multi;
+  $('#chapEyebrow').textContent = multi ? chapPos(ci, ch.length, c.title, c.auto) : '';
+  $('#plTitle').textContent = multi ? c.title : doc.name;
+  $('#plCtx').textContent = doc.name;
+  renderMini();
+  if(playing) setPlayUI();
+}
+
+async function loadPdf(file){
+  if(!window.pdfjsLib){ loadStatus('Die PDF-Funktion konnte nicht geladen werden. Prüfe die Internetverbindung und lade die Seite neu.', true); return; }
+  try{ pdfjsLib.GlobalWorkerOptions.workerSrc = 'lib/pdf.worker.min.js'; }catch(e){}
+  loadStatus('Öffne „' + file.name + '“ …'); setLoad(0);
+  let pdf;
+  try{
+    const buf = await file.arrayBuffer();
+    pdf = await pdfjsLib.getDocument({ data: buf, isEvalSupported:false, disableFontFace:true }).promise;
+  }catch(e){
+    setLoad(null);
+    loadStatus(e && e.name === 'PasswordException' ? 'Diese PDF ist passwortgeschützt. Entferne das Passwort und lade sie erneut.' : 'Die Datei ließ sich nicht öffnen. Ist es eine gültige PDF?', true);
+    return;
+  }
+  const skip = $('#skipNums').checked;
+  let pages = [];
+  for(let n=1; n<=pdf.numPages; n++){
+    const page = await pdf.getPage(n);
+    let lines = await extractLines(page);
+    if(skip) lines = lines.filter(l => !isPageNum(l.t));
+    pages.push(lines);
+    page.cleanup && page.cleanup();
+    setLoad(n / pdf.numPages);
+    loadStatus(`Lese Text aus … Seite ${fmt(n)} von ${fmt(pdf.numPages)}`);
+    if(n % 4 === 0) await new Promise(r => setTimeout(r, 0));
+  }
+  if(skip) pages = stripHeaders(pages);
+  const bodyH = bodyHeight(pages);
+  const parsed = [];
+  pages.forEach((lines, i) => paragraphize(lines, bodyH).forEach(p => parsed.push({ ...p, page: i + 1 })));
+  loadStatus('Suche Kapitel …');
+  const marks = await outlineMarks(pdf);
+  if(!(marks && applyOutline(parsed, marks) >= 2)){ parsed.forEach(p => { delete p.ch; p.h = 0; }); pickHeadings(parsed); }
+  const raw = parsed.map(p => { const o = { page: p.page, text: p.text }; if(p.h) o.h = 1; if(p.ch) o.ch = p.ch; return o; });
+  setLoad(null);
+  if(raw.reduce((a,p) => a + p.text.length, 0) < 30){
+    loadStatus('In dieser PDF wurde kein Text gefunden. Wahrscheinlich ist sie eingescannt (nur Bilder). Dann braucht sie zuerst eine Texterkennung (OCR).', true);
+    return;
+  }
+  try{ pdf.destroy(); }catch(e){}
+  build(raw, { name: file.name.replace(/\.pdf$/i,'').replace(/[_]+/g,' '), key: file.name + ':' + file.size, pages: pdf.numPages, v2: true });
+  loadStatus('');
+  closeSheets();
+  openPlayer();
+  const nc = doc.chapters.length;
+  toast(`„${doc.name}“ ist bereit: ${fmt(doc.pages)} Seiten${nc > 1 ? `, ${nc} ${doc.chapters[0].auto ? 'Abschnitte' : 'Kapitel'}` : ''}.${LIB.ready ? ' In deiner Bibliothek gespeichert.' : ''}`);
+  libRegister();
+}
+function loadText(text){
+  const blocks = text.replace(/\r/g,'').split(/\n\s*\n/).map(b => b.split('\n').map(x => x.trim()).filter(Boolean)).filter(b => b.length);
+  const paras = [];
+  for(const lines of blocks){
+    let rest = lines;
+    const md = /^#{1,4}\s/.test(lines[0]), first = lines[0].replace(/^#+\s*/, '');
+    if(md || (first.length <= 80 && isKw(first) && !/[.,;]$/.test(first))){ paras.push({ page: 1, text: first, h: 1 }); rest = lines.slice(1); }
+    if(rest.length) paras.push({ page: 1, text: rest.reduce((a,l) => a ? joinLine(a,l) : l, '') });
+  }
+  if(!paras.length){ loadStatus('Bitte zuerst Text einfügen.', true); return; }
+  const t0 = paras[0].text;
+  const title = t0.length > 48 ? t0.slice(0, 45).replace(/\s+\S*$/, '') + ' …' : t0;
+  build(paras, { name: title, key: 'text:' + fnv(text) + ':' + text.length, pages: 1, v2: true });
+  closeSheets(); openPlayer();
+  libRegister();
+}
+function loadStatus(msg, err){ const s = $('#loadStatus'); s.textContent = msg || ''; s.style.color = err ? 'var(--warn)' : ''; }
+function setLoad(frac){ const b = $('#loadBar'); if(frac == null){ b.hidden = true; return; } b.hidden = false; b.firstElementChild.style.width = (frac*100).toFixed(1)+'%'; }
+
+/* ---------- Covers ---------- */
+const PALETTES = [
+  ['#24466F','#5D8CC4'], ['#6E2635','#C0584F'], ['#22564A','#76B39A'], ['#4E3673','#A07BCB'], ['#7A4A16','#D8A24A'],
+  ['#1A4855','#4CA2A3'], ['#3D3833','#8E7A68'], ['#272852','#6E6DD0'], ['#5A2950','#C26FA8'], ['#2E4A1E','#8DB65A']
+];
+function fnv(s){ let h = 0x811c9dc5; for(let i=0;i<s.length;i++){ h ^= s.charCodeAt(i); h = Math.imul(h, 0x01000193) >>> 0; } return h; }
+function coverStyle(name){
+  const h = fnv(name || '?');
+  const [a, b] = PALETTES[h % PALETTES.length];
+  const ang = 120 + (h >> 4) % 90;
+  const sz = 55 + (h >> 8) % 45, x = (h >> 12) % 70 - 10, y = (h >> 16) % 50 - 20;
+  return { bg: `linear-gradient(${ang}deg, ${a}, ${b})`, a, b, shape: `width:${sz}%;height:${sz}%;left:${x}%;top:${y}%` };
+}
+function coverHTML(name, label, fontPx){
+  const c = coverStyle(name);
+  return `<div class="cover" lang="de" style="background:${c.bg}"><span class="shape" style="${c.shape}"></span><span class="cl">${esc(label || 'PDF')}</span><span class="ct" style="font-size:${fontPx || 17}px">${esc(name || '')}</span></div>`;
+}
+function setCover(el, name, label, fontPx){
+  const c = coverStyle(name);
+  el.style.background = c.bg; el.lang = 'de';
+  el.innerHTML = `<span class="shape" style="${c.shape}"></span><span class="cl">${esc(label || 'PDF')}</span><span class="ct"${fontPx ? ` style="font-size:${fontPx}px"` : ''}>${esc(name || '')}</span>`;
+}
+function artworkURL(name){
+  try{
+    const c = coverStyle(name), cv = document.createElement('canvas'); cv.width = cv.height = 512;
+    const g = cv.getContext('2d'), gr = g.createLinearGradient(0, 0, 512, 512);
+    gr.addColorStop(0, c.a); gr.addColorStop(1, c.b); g.fillStyle = gr; g.fillRect(0, 0, 512, 512);
+    g.fillStyle = 'rgba(255,255,255,.9)'; g.font = '800 54px "Bricolage Grotesque", system-ui, sans-serif';
+    const words = (name || '').split(/\s+/); let line = '', lines = [];
+    for(const w of words){ const t = line ? line + ' ' + w : w; if(g.measureText(t).width > 420 && line){ lines.push(line); line = w; } else line = t; }
+    if(line) lines.push(line); lines = lines.slice(0, 4);
+    lines.forEach((l, i) => g.fillText(l, 44, 470 - (lines.length - 1 - i) * 60));
+    return cv.toDataURL('image/png');
+  }catch(e){ return null; }
+}
+
+/* ---------- Rendering: reader + player ---------- */
+function renderReader(){
+  const r = $('#reader'); r.innerHTML = ''; curEl = null;
+  const frag = document.createDocumentFragment(); let lastPage = null;
+  for(const p of doc.paras){
+    if(doc.pages > 1 && p.page !== lastPage){ const h = document.createElement('div'); h.className = 'pagemark'; h.textContent = 'Seite ' + p.page; frag.appendChild(h); lastPage = p.page; }
+    const el = document.createElement(p.h ? 'div' : 'p');
+    if(p.h) el.className = 'rh';
+    for(const i of p.s){ const sp = document.createElement('span'); sp.className = 's'; sp.dataset.i = i; sp.textContent = doc.sentences[i].t; el.appendChild(sp); el.appendChild(document.createTextNode(' ')); }
+    frag.appendChild(el);
+  }
+  r.appendChild(frag);
+}
+function renderPlayerMeta(){
+  shownCh = -1;
+  setCover($('#bigCover'), doc.name, doc.pages > 1 ? `${doc.pages} Seiten` : 'Text');
+  setCover($('#miniCover'), doc.name, '');
+  $('#player').style.setProperty('--tint', coverStyle(doc.name).b);
+  renderMini();
+}
+function renderMini(){
+  $('#miniT').textContent = doc.name || '';
+  const c = doc.chapters && doc.chapters.length > 1 ? doc.chapters[chapterOf(idx)] : null;
+  $('#miniS').textContent = [c ? c.title : voiceLabel(), sleepText()].filter(Boolean).join(' · ');
+}
+const tfmt = sec => { sec = Math.max(0, Math.round(sec)); const h = Math.floor(sec/3600), m = Math.floor(sec%3600/60), s = sec%60; return h ? `${h}:${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}` : `${m}:${String(s).padStart(2,'0')}`; };
+const durTxt = sec => { sec = Math.max(0, Math.round(sec)); const h = Math.floor(sec/3600), m = Math.round(sec%3600/60); return h ? `${h} Std. ${m} Min.` : `${Math.max(1, m)} Min.`; };
+function mark(i, scroll){
+  if(curEl) curEl.classList.remove('cur');
+  curEl = $('#reader').querySelector(`.s[data-i="${i}"]`);
+  if(curEl){
+    curEl.classList.add('cur');
+    if(scroll && view === 'text' && follow && !followPaused && !$('#player').hidden){
+      const box = $('#stageText'), r = curEl.getBoundingClientRect(), b = box.getBoundingClientRect();
+      if(r.top < b.top + 30 || r.bottom > b.bottom - 60) curEl.scrollIntoView({ block:'center', behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' });
+    }
+  }
+  $('#caption').textContent = doc.sentences[i] ? doc.sentences[i].t : '';
+  updateProgress();
+}
+function updateProgress(light){
+  if(!doc.sentences.length || !doc.chapters.length) return;
+  const ci = chapterOf(idx), c = doc.chapters[ci];
+  if(ci !== shownCh){ shownCh = ci; renderChapterMeta(); }
+  const within = liveWithin();
+  const el = secBetween(c.start, idx) + within, cdur = Math.max(el, secBetween(c.start, c.end));
+  const rest = secBetween(idx, doc.sentences.length) - within, all = Math.max(1, secBetween(0, doc.sentences.length));
+  const f = el / Math.max(1, cdur);
+  if(!seeking) $('#seek').value = Math.round(f * 1000);
+  $('#tPos').textContent = tfmt(el);
+  $('#tRest').textContent = '-' + tfmt(cdur - el);
+  const s = doc.sentences[idx];
+  $('#tPage').textContent = s && doc.pages > 1 ? `S. ${s.page} / ${doc.pages}` : '';
+  $('#plTotal').textContent = `noch ${durTxt(rest)} gesamt`;
+  $('#miniProg').style.width = ((1 - rest / all) * 100).toFixed(2) + '%';
+  if(!$('#sheetChapters').hidden){
+    if(light){ const b = document.querySelector('#chapList .crow.cur .bar i'); if(b) b.style.width = (f * 100).toFixed(1) + '%'; }
+    else renderChapters();
+  }
+}
+function setPlayUI(){
+  $('#play').innerHTML = playing ? IC.pause.replace(/26/g, '30') : IC.play.replace(/26/g, '30');
+  $('#play').setAttribute('aria-label', playing ? 'Pause' : 'Vorlesen');
+  $('#miniPlay').innerHTML = playing ? IC.pause : IC.play;
+  $('#miniPlay').setAttribute('aria-label', playing ? 'Pause' : 'Vorlesen');
+  if(!$('#sheetChapters').hidden) renderChapters();
+  try{
+    const ms = navigator.mediaSession; if(!ms) return;
+    ms.playbackState = playing ? 'playing' : 'paused';
+    if(playing && typeof MediaMetadata !== 'undefined'){
+      if(ms._doc !== doc.name){ ms._art = artworkURL(doc.name); ms._doc = doc.name; }
+      const c = doc.chapters.length > 1 ? doc.chapters[chapterOf(idx)] : null;
+      ms.metadata = new MediaMetadata({ title: c ? c.title : (doc.name || 'PDF-Vorleser'), artist: c ? doc.name : voiceLabel(), album: 'PDF-Vorleser', artwork: ms._art ? [{ src: ms._art, sizes: '512x512', type: 'image/png' }] : [] });
+    }
+  }catch(e){}
+}
+function setBusy(on){ document.body.classList.toggle('busy', on); if(on && !NV.loading) plStatus('Stimme rechnet …'); else if(!on && !NV.loading) plStatus(sleepStatus()); }
+function plStatus(t){ $('#plStatus').textContent = t || ''; }
+let toastT = null;
+function toast(msg, err){
+  const t = $('#toast'); t.textContent = msg; t.classList.toggle('err', !!err); t.hidden = false;
+  clearTimeout(toastT); toastT = setTimeout(() => { t.hidden = true; }, err ? 6000 : 3500);
+}
+
+/* ---------- Playback ---------- */
+let lastUtt = null;
+const DEV = { t0: 0 };
+let bc = null;   // only one open window plays at a time
+try{ bc = new BroadcastChannel('vorleser-play'); bc.onmessage = e => { if(e.data === 'play' && playing){ stop(); toast('Die Wiedergabe läuft jetzt in einem anderen Fenster.'); } }; }catch(e){}
+function speakFrom(i){
+  if(!doc.sentences.length) return;
+  if(engine() === 'device' && !hasTTS){ toast('Dieser Browser kann nicht mit Gerätestimmen vorlesen. Wähle eine Neural-Stimme.', true); return; }
+  if(!sel){ openSheet('sheetVoice'); return; }
+  const target = Math.max(0, Math.min(i, doc.sentences.length - 1));
+  token++;
+  if(hasTTS) synth.cancel();
+  stopNeuralAudio();
+  CH.n = 0; CH.next = null;
+  if(engine() === 'neural'){
+    ensureCtx();
+    if(NV.keyBase !== keyBase() || target < idx - 1 || target > idx + 3) nReset();
+  }
+  idx = target;
+  playing = true; setPlayUI(); keepAwake(true); startTicker();
+  try{ bc && bc.postMessage('play'); }catch(e){}
+  const my = token;
+  setTimeout(() => { if(my === token) speakCurrent(); }, engine() === 'neural' ? 0 : 80);
+}
+function speakCurrent(){
+  if(!playing) return;
+  if(idx >= doc.sentences.length){ sentenceTo(doc.sentences.length); return; }
+  if(engine() === 'neural'){ nPlay(idx); return; }
+  const my = token, v = curDevice();
+  const u = new SpeechSynthesisUtterance(doc.sentences[idx].t);
+  if(v){ u.voice = v; u.lang = v.lang; } else u.lang = 'de-DE';
+  u.rate = rate; u.pitch = 1;
+  u.onstart = () => { if(my === token) DEV.t0 = performance.now(); };
+  u.onend = () => { if(my !== token || !playing) return; advance(); };
+  u.onerror = e => { if(my !== token || !playing) return; if(e.error === 'interrupted' || e.error === 'canceled') return; advance(); };
+  lastUtt = u;
+  DEV.t0 = performance.now();
+  mark(idx, true);
+  if(synth.paused) synth.resume();
+  synth.speak(u);
+}
+/* move the reading position forward to sentence `now`; returns false when playback has to stop */
+function sentenceTo(now){
+  const prev = idx, n = doc.sentences.length;
+  const prevPage = (doc.sentences[prev] || {}).page, prevCh = chapterOf(prev);
+  if(now >= n){
+    markChapterDone(prevCh);
+    idx = n - 1; stop(); toast('Fertig vorgelesen.');
+    if(doc.key) store.set('pos:' + doc.key, 0);
+    return false;
+  }
+  idx = now;
+  if(doc.key && now % 3 === 0) store.set('pos:' + doc.key, now);
+  if(Math.floor(now / 8) !== Math.floor(prev / 8)) libSavePos();
+  if(chapterOf(now) !== prevCh){
+    markChapterDone(prevCh);
+    if(SLEEP.mode === 'chapter'){ clearSleep(); stop(); mark(now, false); toast('Sleeptimer: Kapitel zu Ende. Gute Nacht.'); return false; }
+  }
+  if(SLEEP.mode === 'page' && doc.sentences[now].page !== prevPage){ clearSleep(); stop(); mark(now, false); toast('Sleeptimer: Ende der Seite erreicht.'); return false; }
+  mark(now, true);
+  return true;
+}
+function advance(){ if(sentenceTo(idx + 1)) speakCurrent(); }
+function stop(){
+  token++; playing = false;
+  if(hasTTS) synth.cancel();
+  stopNeuralAudio(); CH.next = null; DEV.t0 = 0;
+  document.body.classList.remove('busy');
+  stopTicker();
+  setPlayUI(); keepAwake(false);
+  if(doc.key) store.set('pos:'+doc.key, idx);
+  libSavePos();
+  updateProgress();
+  updatePositionState(true);
+}
+function toggle(){ playing ? stop() : speakFrom(idx); }
+function jump(d){
+  const n = Math.max(0, Math.min(idx + d, doc.sentences.length - 1));
+  followPaused = false; $('#followBtn').hidden = true;
+  if(playing) speakFrom(n); else { idx = n; mark(idx, true); }
+}
+let tickT = null;
+function startTicker(){
+  stopTicker();
+  tickT = setInterval(() => {
+    if(!playing) return;
+    if(engine() === 'neural') trackChunk();
+    if(document.visibilityState === 'visible') updateProgress(true);
+    updatePositionState();
+  }, 250);
+}
+function stopTicker(){ clearInterval(tickT); tickT = null; }
+/* live reading position in characters, interpolated inside the sentence that is being spoken */
+/* seconds already spoken of the current sentence */
+function liveWithin(){
+  if(!playing || !doc.sentences[idx]) return 0;
+  if(engine() === 'neural'){
+    const ch = NV.chunk, k = ch ? idx - ch.start : -1;
+    if(NV.src && ch && ch.start >= 0 && k >= 0 && k < ch.offs.length) return Math.max(0, Math.min(sentDur(idx) * 0.99, chunkClock() - ch.offs[k]));
+    return 0;
+  }
+  return DEV.t0 ? Math.max(0, Math.min(sentDur(idx) * 0.98, (performance.now() - DEV.t0) / 1000)) : 0;
+}
+let posStateT = 0;
+function updatePositionState(force){
+  try{
+    const ms = navigator.mediaSession; if(!ms || !ms.setPositionState || !doc.chapters.length) return;
+    const now = Date.now(); if(!force && now - posStateT < 4000) return; posStateT = now;
+    const c = doc.chapters[chapterOf(idx)];
+    const dur = Math.max(1, secBetween(c.start, c.end)), pos = Math.min(dur, secBetween(c.start, idx) + liveWithin());
+    ms.setPositionState({ duration: dur, position: pos, playbackRate: 1 });
+  }catch(e){}
+}
+async function keepAwake(on){
+  try{
+    if(on && 'wakeLock' in navigator && !wake){ wake = await navigator.wakeLock.request('screen'); wake.addEventListener('release', () => { wake = null; }); }
+    if(!on && wake){ await wake.release(); wake = null; }
+  }catch(e){ wake = null; }
+}
+document.addEventListener('visibilitychange', () => { if(document.visibilityState === 'visible' && playing) keepAwake(true); });
+try{
+  const ms = navigator.mediaSession;
+  if(ms){
+    ms.setActionHandler('play', () => { if(!playing) speakFrom(idx); });
+    ms.setActionHandler('pause', () => { if(playing) stop(); });
+    ms.setActionHandler('nexttrack', () => jump(1));
+    ms.setActionHandler('previoustrack', () => jump(-1));
+  }
+}catch(e){}
+
+/* ---------- Sleep timer ---------- */
+const SLEEP = { mode: null, end: 0, timer: null, page: null };
+function setSleep(v){
+  clearSleep();
+  if(v === '0' || v === 0){ toast('Sleeptimer aus.'); return; }
+  if(v === 'page'){ SLEEP.mode = 'page'; toast('Der Vorleser stoppt am Ende dieser Seite.'); }
+  else if(v === 'chapter'){ SLEEP.mode = 'chapter'; toast('Der Vorleser stoppt am Ende dieses Kapitels.'); }
+  else { SLEEP.mode = 'time'; SLEEP.end = Date.now() + (+v) * 60000; toast(`Sleeptimer: ${v} Minuten.`); }
+  SLEEP.timer = setInterval(sleepTick, 1000); sleepTick();
+}
+function clearSleep(){ clearInterval(SLEEP.timer); SLEEP.mode = null; SLEEP.end = 0; sleepUI(); }
+function sleepTick(){
+  if(SLEEP.mode === 'time' && Date.now() >= SLEEP.end){
+    clearSleep();
+    if(playing) fadeStop();
+    return;
+  }
+  sleepUI();
+}
+function sleepText(){
+  if(SLEEP.mode === 'page') return 'stoppt am Seitenende';
+  if(SLEEP.mode === 'chapter') return 'stoppt am Kapitelende';
+  if(SLEEP.mode === 'time') return 'Schlaf in ' + tfmt((SLEEP.end - Date.now()) / 1000);
+  return '';
+}
+function sleepStatus(){ return SLEEP.mode ? 'Sleeptimer: ' + (SLEEP.mode === 'page' ? 'Ende der Seite' : SLEEP.mode === 'chapter' ? 'Ende des Kapitels' : tfmt((SLEEP.end - Date.now()) / 1000)) : ''; }
+function sleepUI(){
+  $('#sleepBtn').classList.toggle('on', !!SLEEP.mode);
+  $('#sleepLbl').textContent = SLEEP.mode === 'time' ? tfmt((SLEEP.end - Date.now()) / 1000) : SLEEP.mode === 'page' ? 'Seite' : SLEEP.mode === 'chapter' ? 'Kapitel' : '';
+  if(!NV.loading && !document.body.classList.contains('busy')) plStatus(sleepStatus());
+  renderMini();
+  document.querySelectorAll('#sleepChips .chip').forEach(c => c.setAttribute('aria-pressed', String(
+    (c.dataset.sleep === '0' && !SLEEP.mode) || (c.dataset.sleep === SLEEP.mode && SLEEP.mode !== 'time'))));
+  $('#sleepSub').textContent = SLEEP.mode ? 'Aktiv: ' + sleepStatus().replace('Sleeptimer: ', '') + '. Wähle „Aus“ zum Abbrechen.' : 'Der Vorleser hört nach der gewählten Zeit von selbst auf.';
+}
+function fadeStop(){
+  const a = AE.el;
+  if(engine() === 'neural' && a && AE.ok && !a.paused){
+    let v = 1;
+    const f = setInterval(() => { v -= 0.1; try{ a.volume = Math.max(0, v); }catch(e){} if(v <= 0){ clearInterval(f); stop(); try{ a.volume = 1; }catch(e){} } }, 400);
+  } else stop();
+  toast('Gute Nacht. Die Stelle ist gespeichert.');
+}
+
+/* ---------- Rate / expression ---------- */
+const SPEEDS = [0.8, 0.9, 1, 1.1, 1.2, 1.35, 1.5, 1.75, 2];
+const rateTxt = r => (Math.round(r*100)/100).toString().replace('.',',') + '×';
+function setRate(r){
+  rate = r; store.set('rate', rate);
+  $('#speedLbl').textContent = rateTxt(rate);
+  renderSpeedChips(); updateProgress();
+  if(playing) speakFrom(idx);
+}
+function renderSpeedChips(){
+  $('#speedChips').innerHTML = SPEEDS.map(s => `<button class="chip" type="button" data-speed="${s}" aria-pressed="${Math.abs(s - rate) < 0.001}">${rateTxt(s)}</button>`).join('');
+}
+function setExpr(x){
+  expr = x; store.set('expr', expr);
+  document.querySelectorAll('#exprChips .chip').forEach(c => c.setAttribute('aria-pressed', String(Math.abs(+c.dataset.expr - expr) < 0.001)));
+  if(playing && engine() === 'neural') speakFrom(idx);
+}
+
+/* ---------- Voice sheet ---------- */
+function renderVoices(){
+  const list = $('#voiceList');
+  let h = '';
+  if(neuralOK){
+    let lastG = null;
+    for(const v of VOICES){
+      if(v.group !== lastG){ lastG = v.group; h += `<div class="vgroup">${v.group === 'h' ? 'Hörbuch-Stimmen' : 'Weitere Neural-Stimmen'}</div>`; }
+      const on = sel === 'n:' + v.key;
+      const st = NV.ready === v.model || NV.cached[v.model] ? '<span class="vstate ok">geladen</span>'
+        : NV.loading === v.model ? '<span class="vstate">lädt …</span>'
+        : `<span class="vstate">${v.mb} MB</span>`;
+      h += `<div class="vrow" role="radio" tabindex="0" aria-checked="${on}" data-sel="n:${v.key}" data-model="${v.model}">
+        <span class="vav" style="background:${v.hue}">${esc(v.name[0])}</span>
+        <span class="vtxt"><b>${esc(v.name)}</b><span>${esc(v.desc)}</span>${on && NV.loading === v.model ? '<div class="dl"><i></i></div>' : ''}</span>
+        ${st}
+        <button class="vplay" type="button" data-sample="${v.key}" aria-label="Hörprobe ${esc(v.name)}">${IC.sm}</button>
+      </div>`;
+      if(NV.cached[v.model] === undefined){ NV.cached[v.model] = null; try{ nWorker().postMessage({type:'isCached', voice: v.model}); }catch(e){} }
+    }
+  }
+  if(deviceVoices.length){
+    h += '<div class="vgroup">Stimmen deines Geräts</div>';
+    for(const x of deviceVoices.slice(0, 12)){
+      const on = sel === 'd:' + x.v.voiceURI;
+      h += `<div class="vrow" role="radio" tabindex="0" aria-checked="${on}" data-sel="d:${esc(x.v.voiceURI)}">
+        <span class="vav" style="background:#4A5563">${esc(prettyName(x.v)[0] || '?')}</span>
+        <span class="vtxt"><b>${esc(prettyName(x.v))}</b><span>${x.score >= 45 ? 'hochwertig · ' : ''}${esc(x.v.lang)} · stoppt bei gesperrtem Bildschirm</span></span>
+        <button class="vplay" type="button" data-dsample="${esc(x.v.voiceURI)}" aria-label="Hörprobe">${IC.sm}</button>
+      </div>`;
+    }
+  }
+  if(!h) h = '<p class="empty">Auf diesem Gerät sind keine Stimmen verfügbar.</p>';
+  list.innerHTML = h;
+  if(NV.loading) showLoadProgress(NV.loading);
+}
+let sampleAudio = null;
+function playSample(key, btn){
+  try{
+    if(sampleAudio){ sampleAudio.pause(); }
+    if(sampleAudio && sampleAudio._key === key){ sampleAudio = null; btn.innerHTML = IC.sm; return; }
+    document.querySelectorAll('[data-sample]').forEach(b => b.innerHTML = IC.sm);
+    sampleAudio = new Audio('samples/' + key + '.mp3'); sampleAudio._key = key;
+    sampleAudio.onended = () => { btn.innerHTML = IC.sm; sampleAudio = null; };
+    btn.innerHTML = IC.stop;
+    sampleAudio.play().catch(() => { btn.innerHTML = IC.sm; toast('Die Hörprobe konnte nicht abgespielt werden.', true); });
+  }catch(e){}
+}
+function playDeviceSample(uri){
+  const x = deviceVoices.find(x => x.v.voiceURI === uri); if(!x) return;
+  if(playing) stop();
+  synth.cancel();
+  const u = new SpeechSynthesisUtterance('Hallo! So klinge ich, wenn ich dir deine PDF vorlese.');
+  u.voice = x.v; u.lang = x.v.lang; u.rate = rate; lastUtt = u;
+  setTimeout(() => synth.speak(u), 60);
+}
+function chooseVoice(v){
+  if(v === sel) return;
+  const was = playing;
+  if(was) stop();
+  sel = v; store.set('voice', sel);
+  const n = curNeural();
+  if(n){
+    ensureCtx();
+    loadModel(n.model).then(() => { if(!$('#sheetVoice').hidden) renderVoices(); }).catch(() => {});
+  }
+  updateVoiceLabel(); renderVoices();
+  if(was) speakFrom(idx);
+}
+
+/* ---------- Library ---------- */
+const LIB = { db:null, assets:null, col:null, docs:[], ready:false, chain:Promise.resolve(), lastSaved:-1, item:null, confirm:false };
+function libIdFor(key){ return 'd-' + fnv(key).toString(16).padStart(8,'0') + '-' + fnv(key.split('').reverse().join('')).toString(16).padStart(8,'0'); }
+const libWrite = fn => { LIB.chain = LIB.chain.then(fn).catch(() => {}); return LIB.chain; };
+const nowIso = () => new Date().toISOString();
+/* on-device library (IndexedDB): used when the Claude store is not available, e.g. in the installed app */
+function localBackend(){
+  if(!('indexedDB' in window)) return null;
+  const dbp = new Promise((res, rej) => {
+    let r; try{ r = indexedDB.open('vorleser', 1); }catch(e){ rej(e); return; }
+    r.onupgradeneeded = () => { const d = r.result; if(!d.objectStoreNames.contains('library')) d.createObjectStore('library'); if(!d.objectStoreNames.contains('texts')) d.createObjectStore('texts'); };
+    r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error);
+  });
+  const run = (store, mode, fn) => dbp.then(d => new Promise((res, rej) => {
+    const t = d.transaction(store, mode), req = fn(t.objectStore(store));
+    t.oncomplete = () => res(req ? req.result : undefined); t.onerror = t.onabort = () => rej(t.error);
+  }));
+  const subs = new Set();
+  const emit = async () => {
+    const all = await run('library', 'readonly', st => st.getAll());
+    all.sort((a, b) => String(b.updatedAt || '').localeCompare(String(a.updatedAt || '')));
+    const snap = { docs: all.map(v => ({ id: v._id, data: () => v })) };
+    subs.forEach(cb => cb(snap));
+  };
+  const docRef = id => ({
+    get: async () => { const v = await run('library', 'readonly', st => st.get(id)); return { exists: !!v, data: () => v }; },
+    set: async d => { await run('library', 'readwrite', st => st.put({ ...d, _id: id }, id)); emit(); },
+    update: async d => {
+      const v = await run('library', 'readonly', st => st.get(id));
+      if(!v) throw { code: 'invalid_argument' };
+      await run('library', 'readwrite', st => st.put({ ...v, ...d, _id: id }, id)); emit();
+    },
+    delete: async () => { await run('library', 'readwrite', st => st.delete(id)); emit(); }
+  });
+  const col = { orderBy(){ return col; }, limit(){ return col; }, doc: docRef,
+    onSnapshot(cb, err){ subs.add(cb); emit().catch(e => err && err(e)); return () => subs.delete(cb); } };
+  return {
+    db: { collection: () => col },
+    assets: {
+      upload: async blob => { const id = 't' + Date.now().toString(36) + Math.random().toString(36).slice(2, 8); const text = await blob.text(); await run('texts', 'readwrite', st => st.put(text, id)); return { id }; },
+      delete: id => run('texts', 'readwrite', st => st.delete(id))
+    },
+    readText: async id => { const t = await run('texts', 'readonly', st => st.get(id)); if(t == null) throw new Error('Text fehlt'); return JSON.parse(t); },
+    ready: dbp
+  };
+}
+async function libInit(){
+  let db = null, assets = null;
+  try{
+    if(window.claude && typeof window.claude.use === 'function') [db, assets] = await Promise.all([window.claude.use('db'), window.claude.use('assets')]);
+  }catch(e){ db = null; }
+  if(!db){
+    const lb = localBackend();
+    if(lb){ try{ await lb.ready; db = lb.db; assets = lb.assets; LIB.readText = lb.readText; LIB.local = true; }catch(e){ db = null; } }
+  }
+  if(!db){
+    $('#libNote').textContent = '';
+    $('#foot').textContent = 'Die Bibliothek funktioniert, wenn du den Vorleser in Claude geöffnet hast und angemeldet bist. Vorlesen klappt trotzdem.';
+    renderLib(); return;
+  }
+  LIB.db = db; LIB.assets = assets; LIB.col = db.collection('library'); LIB.ready = true;
+  if(LIB.local){ try{ navigator.storage && navigator.storage.persist && navigator.storage.persist(); }catch(e){} }
+  LIB.col.orderBy('updatedAt', 'desc').limit(300).onSnapshot(s => {
+    LIB.docs = s.docs.map(d => ({ id: d.id, ...d.data() }));
+    renderLib();
+    if(!LIB.autoOpened){
+      LIB.autoOpened = true;   // put the last book into the mini player, ready to play
+      const last = LIB.docs.find(x => (x.pos || 0) > 0 && (x.pos || 0) < (x.sentences || 1) - 1) || LIB.docs[0];
+      if(last && doc.sample && !playing) libOpen(last.id, false, true);
+    }
+  }, () => { $('#libNote').textContent = 'gerade nicht erreichbar'; });
+}
+function itemStats(d){
+  const pct = d.sentences ? Math.min(100, Math.round((d.pos || 0) / d.sentences * 100)) : 0;
+  const restSec = d.chars ? (d.chars - (d.posChars || 0)) / cpsNow() : null;
+  return { pct, restSec };
+}
+function greetText(){ const h = new Date().getHours(); return h < 5 ? 'Gute Nacht' : h < 11 ? 'Guten Morgen' : h < 18 ? 'Hallo' : 'Guten Abend'; }
+function renderLib(){
+  $('#greet').textContent = greetText();
+  const grid = $('#grid');
+  const docs = LIB.docs;
+  let h = `<button class="tile add-tile" type="button" id="addTile"><div class="cover">${IC.plus}</div><span class="tile-name">PDF hinzufügen</span><span class="tile-meta">oder Text einfügen</span></button>`;
+  if(!docs.length){
+    h += `<button class="tile${doc.sample ? ' now' : ''}" type="button" data-sample-doc="1">${coverHTML('Beispieltext', 'Probe', 17)}<span class="tile-name">Beispieltext</span><span class="tile-meta">Zum Ausprobieren</span></button>`;
+  }
+  for(const d of docs){
+    const st = itemStats(d);
+    const nc = d.chapters || 0, started = (d.pos || 0) > 0;
+    const meta = started ? (nc > 1 ? `Kap. ${(d.chapter || 0) + 1}/${nc} · ${st.pct} %` : d.pages > 1 ? `S. ${d.page || 1} / ${d.pages} · ${st.pct} %` : `${st.pct} %`)
+      : (nc > 1 ? `${nc} Kapitel · neu` : d.pages > 1 ? `${d.pages} Seiten · neu` : 'neu');
+    h += `<div class="tile${doc.libId === d.id ? ' now' : ''}" role="button" tabindex="0" data-open="${esc(d.id)}">
+      ${coverHTML(d.name, d.pages > 1 ? `${d.pages} S.` : 'Text', 17)}
+      <button class="tile-more" type="button" data-more="${esc(d.id)}" aria-label="Optionen für ${esc(d.name)}">${IC.more}</button>
+      <span class="tile-name">${esc(d.name || 'Ohne Titel')}</span>
+      <span class="tile-meta">${meta}</span>
+      <span class="bar"><i style="width:${st.pct}%"></i></span>
+    </div>`;
+  }
+  grid.innerHTML = h;
+  $('#libNote').textContent = docs.length ? `${docs.length} gespeichert` : '';
+  if(LIB.ready) $('#foot').textContent = (docs.length ? '' : 'Jede PDF, die du hinzufügst, landet hier, samt der Stelle, an der du aufgehört hast. ') + (LIB.local ? 'Deine Bibliothek ist nur auf diesem Gerät gespeichert.' : 'Nur du siehst deine Bibliothek.') + ' Die Stimmen rechnen direkt auf deinem Gerät.';
+  renderHero();
+}
+function renderHero(){
+  const hero = $('#hero');
+  const d = LIB.docs.find(x => (x.pos || 0) > 0 && (x.pos || 0) < (x.sentences || 1) - 1) || LIB.docs[0];
+  if(!d){ hero.hidden = true; return; }
+  const st = itemStats(d);
+  hero.hidden = false; hero.dataset.open = d.id;
+  hero.innerHTML = `${coverHTML(d.name, d.pages > 1 ? `${d.pages} S.` : 'Text', 13)}
+    <div class="hero-body">
+      <span class="eyebrow">${(d.pos || 0) > 0 ? 'Weiterhören' : 'Als Nächstes'}</span>
+      <span class="hero-title">${esc(d.name)}</span>
+      <span class="hero-meta">${(d.chapters || 0) > 1 ? esc(d.chapterTitle ? chapPos(d.chapter || 0, d.chapters, d.chapterTitle, /^Abschnitt \d/.test(d.chapterTitle), true) : `Kapitel ${(d.chapter || 0) + 1} von ${d.chapters}`) : d.pages > 1 ? `Seite ${d.page || 1} von ${d.pages}` : 'Text'}${st.restSec != null ? ` · noch ca. ${durTxt(st.restSec)}` : ''}</span>
+      <div class="hero-row"><span class="bar"><i style="width:${st.pct}%"></i></span><span class="playdot">${IC.play.replace(/26/g,'20')}</span></div>
+    </div>`;
+}
+async function libRegister(){
+  if(!LIB.ready || !doc.libId) return;
+  const id = doc.libId, d = doc, ref = LIB.col.doc(id);
+  await libWrite(async () => {
+    const snap = await ref.get();
+    const old = snap.exists ? snap.data() : null;
+    const same = !!(old && old.textV === 2 && old.textAsset);
+    if(old && doc === d && !playing){
+      let p = old.pos || 0;
+      if(!same && old.posChars){ p = d.cum.findIndex(c => c >= old.posChars); if(p < 0) p = 0; }
+      if(p > 0 && p < d.sentences.length && p !== idx){ idx = p; mark(idx, true); }
+    }
+    if(same && Array.isArray(old.done)) old.done.forEach(x => { if(x < d.chapters.length) d.done.add(x); });
+    const oldAsset = old && old.textAsset;
+    let textAsset = same ? oldAsset : null, textV = 2;
+    if(!textAsset && LIB.assets){
+      try{
+        const blob = new Blob([JSON.stringify({ v: 2, name: d.name, pages: d.pages, paras: d.raw })], { type: 'application/json' });
+        textAsset = (await LIB.assets.upload(blob, { type: 'application/json' })).id;
+        if(oldAsset && oldAsset !== textAsset){ try{ await LIB.assets.delete(oldAsset); }catch(e){} }
+      }catch(e){ toast('Der Text konnte nicht in der Bibliothek gespeichert werden. Die Lesestelle wird trotzdem gemerkt.', true); }
+    }
+    if(!textAsset){ textAsset = oldAsset || null; textV = old ? (old.textV || 1) : 2; }
+    const t = nowIso(), pos = doc === d ? idx : (old ? old.pos : 0), ci = chapterOf(pos, d);
+    await ref.set({ name: d.name, key: d.key, pages: d.pages, sentences: d.sentences.length, chars: d.cum[d.cum.length-1], pos, posChars: d.cum[pos] || 0,
+      page: (d.sentences[pos] || d.sentences[0]).page, textAsset, textV, chapters: d.chapters.length, chapter: ci, chapterTitle: d.chapters[ci].title,
+      done: [...d.done].sort((a,b) => a - b), addedAt: (old && old.addedAt) || t, updatedAt: t });
+    LIB.lastSaved = pos;
+    if(d.key) store.set('done:' + d.key, [...d.done]);
+    if(doc === d && !$('#sheetChapters').hidden) renderChapters();
+  });
+}
+function libSavePos(){
+  if(!LIB.ready || !doc.libId || LIB.lastSaved === idx) return;
+  const id = doc.libId, target = idx, page = (doc.sentences[target] || {}).page || 1, posChars = doc.cum[target] || 0;
+  const ci = chapterOf(target), chapterTitle = (doc.chapters[ci] || {}).title || '';
+  libWrite(async () => {
+    if(doc.libId !== id || LIB.lastSaved === target) return;
+    await LIB.col.doc(id).update({ pos: target, page, posChars, chapter: ci, chapterTitle, updatedAt: nowIso() });
+    LIB.lastSaved = target;
+  });
+}
+async function libReadText(assetId){
+  if(LIB.readText) return LIB.readText(assetId);
+  const res = await fetch('/_blob/' + assetId);
+  if(!res.ok) throw new Error('HTTP ' + res.status);
+  return res.json();
+}
+async function libOpen(id, fromStart, silent){
+  const d = LIB.docs.find(x => x.id === id); if(!d) return;
+  if(doc.libId === id){ if(fromStart){ jumpTo(0); } if(!silent) openPlayer(); return; }
+  if(!d.textAsset){ if(!silent) toast('Zu diesem Eintrag ist kein Text gespeichert. Lade die PDF bitte noch einmal hoch.', true); return; }
+  if(!silent) toast(`Öffne „${d.name}“ …`);
+  try{
+    const j = await libReadText(d.textAsset);
+    build(j.paras, { name: d.name, key: d.key, pages: d.pages, v2: j.v === 2, done: d.textV === 2 && Array.isArray(d.done) ? d.done : [] });
+    doc.libId = d.id;
+    if(!fromStart && d.pos > 0 && d.pos < doc.sentences.length){ idx = d.pos; mark(idx, false); }
+    if(fromStart){ idx = 0; mark(0, false); }
+    LIB.lastSaved = fromStart ? -1 : idx;
+    renderLib();
+    if(silent) return;
+    openPlayer();
+    $('#toast').hidden = true;
+    libWrite(() => LIB.col.doc(d.id).update({ updatedAt: nowIso() }));
+  }catch(e){ if(!silent) toast('Der gespeicherte Text konnte nicht geladen werden. Prüfe die Internetverbindung.', true); }
+}
+function jumpTo(i){ if(playing) speakFrom(i); else { idx = i; mark(i, true); } }
+function libDelete(id){
+  const d = LIB.docs.find(x => x.id === id); if(!d) return;
+  libWrite(async () => {
+    await LIB.col.doc(id).delete();
+    if(d.textAsset && LIB.assets){ try{ await LIB.assets.delete(d.textAsset); }catch(e){} }
+  });
+  toast(`„${d.name}“ entfernt.`);
+}
+
+/* ---------- Player / sheets ---------- */
+function openPlayer(){
+  $('#player').hidden = false; document.body.style.overflow = 'hidden';
+  setView(view);
+}
+function closePlayer(){ $('#player').hidden = true; document.body.style.overflow = ''; }
+function setView(v){
+  view = v; store.set('view', v);
+  $('#viewCover').setAttribute('aria-pressed', String(v === 'cover'));
+  $('#viewText').setAttribute('aria-pressed', String(v === 'text'));
+  $('#stageCover').hidden = v !== 'cover';
+  $('#stageText').hidden = v !== 'text';
+  $('#followBtn').hidden = true; followPaused = false;
+  if(v === 'text') requestAnimationFrame(() => mark(idx, true));
+}
+let openSheetId = null;
+function openSheet(id){
+  closeSheets(true);
+  openSheetId = id; $('#scrim').hidden = false; $('#' + id).hidden = false;
+  if(id === 'sheetVoice') renderVoices();
+  if(id === 'sheetSpeed') renderSpeedChips();
+  if(id === 'sheetSleep') sleepUI();
+  if(id === 'sheetChapters'){ renderChapters(); requestAnimationFrame(() => { const r = $('#chapList .crow.cur'); if(r) r.scrollIntoView({ block: 'center' }); }); }
+}
+function closeSheets(keepScrim){
+  document.querySelectorAll('.sheet').forEach(s => s.hidden = true);
+  if(!keepScrim) $('#scrim').hidden = true;
+  openSheetId = null;
+  if(sampleAudio){ try{ sampleAudio.pause(); }catch(e){} sampleAudio = null; }
+}
+
+/* ---------- Events ---------- */
+$('#grid').addEventListener('click', e => {
+  if(e.target.closest('#addTile')){ openSheet('sheetAdd'); return; }
+  const more = e.target.closest('[data-more]');
+  if(more){ e.stopPropagation(); openItem(more.dataset.more); return; }
+  if(e.target.closest('[data-sample-doc]')){ if(!doc.sample) buildSample(); $('#mini').hidden = false; openPlayer(); return; }
+  const t = e.target.closest('[data-open]'); if(t) libOpen(t.dataset.open);
+});
+$('#grid').addEventListener('keydown', e => { if((e.key === 'Enter' || e.key === ' ') && e.target.matches('[data-open]')){ e.preventDefault(); libOpen(e.target.dataset.open); } });
+let pressT = null;
+$('#grid').addEventListener('pointerdown', e => { const t = e.target.closest('[data-open]'); if(!t) return; pressT = setTimeout(() => { pressT = 'fired'; openItem(t.dataset.open); }, 550); });
+['pointerup','pointercancel','pointerleave'].forEach(ev => $('#grid').addEventListener(ev, () => { if(pressT && pressT !== 'fired') clearTimeout(pressT); setTimeout(() => { pressT = null; }, 0); }));
+$('#grid').addEventListener('click', e => { if(pressT === 'fired'){ e.stopImmediatePropagation(); } }, true);
+$('#hero').addEventListener('click', () => { const id = $('#hero').dataset.open; if(engine() === 'neural') ensureCtx(); if(id) libOpen(id).then(() => { if(!playing) speakFrom(idx); }); });
+function openItem(id){
+  const d = LIB.docs.find(x => x.id === id); if(!d) return;
+  LIB.item = id; LIB.confirm = false;
+  const st = itemStats(d);
+  $('#itemTitle').textContent = d.name;
+  $('#itemSub').textContent = `${d.pages > 1 ? d.pages + ' Seiten · ' : ''}${(d.chapters || 0) > 1 ? `${(d.done || []).length} von ${d.chapters} Kapiteln abgeschlossen · ` : ''}${st.pct} % gehört${st.restSec != null ? ' · noch ca. ' + durTxt(st.restSec) : ''}${d.addedAt ? ' · hinzugefügt am ' + new Date(d.addedAt).toLocaleDateString('de-DE') : ''}`;
+  $('#itemDel').textContent = 'Entfernen';
+  openSheet('sheetItem');
+}
+$('#itemPlay').addEventListener('click', () => { const id = LIB.item; closeSheets(); if(engine() === 'neural') ensureCtx(); libOpen(id).then(() => { if(!playing) speakFrom(idx); }); });
+$('#itemRestart').addEventListener('click', () => { const id = LIB.item; closeSheets(); libOpen(id, true); });
+$('#itemDel').addEventListener('click', () => {
+  if(!LIB.confirm){ LIB.confirm = true; $('#itemDel').textContent = 'Wirklich entfernen?'; return; }
+  const id = LIB.item; closeSheets();
+  if(doc.libId === id){ stop(); doc.libId = null; }
+  libDelete(id);
+});
+
+$('#openAdd2').addEventListener('click', () => openSheet('sheetAdd'));
+$('#openApp').addEventListener('click', () => openSheet('sheetApp'));
+$('#scrim').addEventListener('click', () => closeSheets());
+document.addEventListener('keydown', e => {
+  if(e.key === 'Escape'){ if(openSheetId) closeSheets(); else if(!$('#player').hidden) closePlayer(); return; }
+  if(/^(INPUT|SELECT|TEXTAREA|BUTTON)$/.test(e.target.tagName) || openSheetId) return;
+  if(e.code === 'Space'){ e.preventDefault(); toggle(); }
+  else if(e.key === 'ArrowRight') jump(1);
+  else if(e.key === 'ArrowLeft') jump(-1);
+});
+
+$('#file').addEventListener('change', e => { const f = e.target.files[0]; if(f) loadPdf(f); e.target.value = ''; });
+const drop = $('#drop');
+['dragenter','dragover'].forEach(ev => drop.addEventListener(ev, e => { e.preventDefault(); drop.classList.add('over'); }));
+['dragleave','drop'].forEach(ev => drop.addEventListener(ev, e => { e.preventDefault(); drop.classList.remove('over'); }));
+drop.addEventListener('drop', e => { const f = [...(e.dataTransfer?.files || [])].find(f => /pdf$/i.test(f.type) || /\.pdf$/i.test(f.name)); if(f) loadPdf(f); else loadStatus('Bitte eine PDF-Datei ablegen.', true); });
+document.addEventListener('dragover', e => { if($('#sheetAdd').hidden && e.dataTransfer && [...e.dataTransfer.types].includes('Files')){ openSheet('sheetAdd'); } });
+$('#pasteGo').addEventListener('click', () => loadText($('#pasteText').value));
+$('#skipNums').addEventListener('change', e => store.set('skip', e.target.checked));
+
+$('#miniOpen').addEventListener('click', openPlayer);
+$('#miniCover').addEventListener('click', openPlayer);
+$('#miniPlay').addEventListener('click', toggle);
+$('#closePlayer').addEventListener('click', closePlayer);
+$('#viewCover').addEventListener('click', () => setView('cover'));
+$('#viewText').addEventListener('click', () => setView('text'));
+$('#play').addEventListener('click', toggle);
+$('#prev').addEventListener('click', () => jump(-1));
+$('#next').addEventListener('click', () => jump(1));
+$('#voiceBtn').addEventListener('click', () => openSheet('sheetVoice'));
+$('#chapBtn').addEventListener('click', () => openSheet('sheetChapters'));
+$('#chapLine').addEventListener('click', () => openSheet('sheetChapters'));
+$('#chapList').addEventListener('click', e => {
+  const t = e.target.closest('[data-toggle]'); if(t){ toggleDone(+t.dataset.toggle); return; }
+  const j = e.target.closest('[data-jump]'); if(!j) return;
+  const c = doc.chapters[+j.dataset.jump]; if(!c) return;
+  followPaused = false; $('#followBtn').hidden = true;
+  if(engine() === 'neural') ensureCtx();
+  closeSheets();
+  speakFrom(c.start);
+});
+$('#speedBtn').addEventListener('click', () => openSheet('sheetSpeed'));
+$('#sleepBtn').addEventListener('click', () => openSheet('sheetSleep'));
+$('#speedChips').addEventListener('click', e => { const c = e.target.closest('[data-speed]'); if(c){ setRate(+c.dataset.speed); closeSheets(); } });
+$('#sleepChips').addEventListener('click', e => { const c = e.target.closest('[data-sleep]'); if(c){ setSleep(c.dataset.sleep); closeSheets(); } });
+$('#exprChips').addEventListener('click', e => { const c = e.target.closest('[data-expr]'); if(c) setExpr(+c.dataset.expr); });
+$('#voiceList').addEventListener('click', e => {
+  const s = e.target.closest('[data-sample]'); if(s){ e.stopPropagation(); playSample(s.dataset.sample, s); return; }
+  const ds = e.target.closest('[data-dsample]'); if(ds){ e.stopPropagation(); playDeviceSample(ds.dataset.dsample); return; }
+  const r = e.target.closest('[data-sel]'); if(r) chooseVoice(r.dataset.sel);
+});
+$('#voiceList').addEventListener('keydown', e => { if((e.key === 'Enter' || e.key === ' ') && e.target.matches('[data-sel]')){ e.preventDefault(); chooseVoice(e.target.dataset.sel); } });
+
+let seeking = false;
+function seekTarget(v){
+  const c = doc.chapters[chapterOf(idx)], target = v / 1000 * secBetween(c.start, c.end);
+  let acc = 0, i = c.start;
+  while(i < c.end - 1 && acc + sentDur(i) <= target){ acc += sentDur(i); i++; }
+  return { c, sec: target, i };
+}
+$('#seek').addEventListener('input', e => { seeking = true; $('#tPos').textContent = tfmt(seekTarget(+e.target.value).sec); });
+$('#seek').addEventListener('change', e => {
+  seeking = false;
+  const t = seekTarget(+e.target.value);
+  followPaused = false; $('#followBtn').hidden = true;
+  jumpTo(t.i);
+});
+$('#reader').addEventListener('click', e => {
+  const s = e.target.closest('.s'); if(!s) return;
+  followPaused = false; $('#followBtn').hidden = true;
+  speakFrom(+s.dataset.i);
+});
+const userScroll = () => { if(playing && view === 'text' && !followPaused){ followPaused = true; $('#followBtn').hidden = false; } };
+$('#stageText').addEventListener('wheel', userScroll, {passive:true});
+$('#stageText').addEventListener('touchmove', userScroll, {passive:true});
+$('#followBtn').addEventListener('click', () => { followPaused = false; $('#followBtn').hidden = true; mark(idx, true); });
+$('#copyLink').addEventListener('click', () => {
+  const link = $('#appLink').textContent.trim(), btn = $('#copyLink');
+  const selectIt = () => { try{ const r = document.createRange(); r.selectNodeContents($('#appLink')); const s = getSelection(); s.removeAllRanges(); s.addRange(r); }catch(e){} };
+  const done = ok => { btn.textContent = ok ? 'Kopiert' : 'Markiert, jetzt kopieren'; setTimeout(() => { btn.textContent = 'Link kopieren'; }, 2500); };
+  try{ navigator.clipboard.writeText(link).then(() => done(true), () => { selectIt(); done(false); }); }catch(e){ selectIt(); done(false); }
+});
+
+/* ---------- Start ---------- */
+const SAMPLE = [
+  { h:1, text:'Willkommen' },
+  { text:'Das hier ist ein kurzer Beispieltext, damit du die Stimmen gleich ausprobieren kannst. Tippe unten auf Stimme, um zwischen den Hörbuch-Stimmen wie Anna, Clara oder Lena zu wechseln.' },
+  { h:1, text:'Kapitel und Sleeptimer' },
+  { text:'Rechts neben dem Titel findest du die Kapitelübersicht. Dort siehst du, wie lange jedes Kapitel dauert, wo du gerade bist und welche Kapitel du schon abgeschlossen hast. Mit dem Mond stellst du den Sleeptimer, auch bis zum Ende des Kapitels.' },
+  { h:1, text:'Deine Bibliothek' },
+  { text:'Lade danach deine eigene PDF über das Plus. Sie landet in deiner Bibliothek, und du kannst jederzeit dort weiterhören, wo du aufgehört hast.' }
+];
+function buildSample(){ build(SAMPLE.map(p => ({ page:1, ...p })), { name:'Beispieltext', key:null, pages:1, sample:true, v2:true }); }
+$('#skipNums').checked = store.get('skip', true);
+$('#speedLbl').textContent = rateTxt(rate);
+setExpr(expr);
+setPlayUI();
+if(hasTTS){
+  if(!loadDeviceVoices()){
+    try{ synth.addEventListener('voiceschanged', loadDeviceVoices); }catch(e){ synth.onvoiceschanged = loadDeviceVoices; }
+    let tries = 0; const t = setInterval(() => { if(loadDeviceVoices() || ++tries > 20) clearInterval(t); }, 300);
+  }
+}
+if(navigator.standalone || (window.matchMedia && matchMedia('(display-mode: standalone)').matches)) $('#openApp').hidden = true;
+if('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
+buildSample();
+updateVoiceLabel();
+renderLib();
+libInit();
+setTimeout(() => {   // warm up the chosen voice if it is already stored on this device
+  const n = curNeural(); if(!n || !neuralOK) return;
+  NV.autoWarm = n.model;
+  try{ nWorker().postMessage({ type: 'isCached', voice: n.model }); }catch(e){}
+}, 1200);
+})();
+</script>
+
+</body>
+</html>
