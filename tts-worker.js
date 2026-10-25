@@ -6,13 +6,10 @@ const CACHE = 'vorleser-app-voices-v1';
 const PPDATA = { parts: ['engine/pp-data.part0.wasm', 'engine/pp-data.part1.wasm'], size: 18077249 };
 const HF = 'https://huggingface.co/';
 const MODELS = {
-  hoerbuch: HF + 'domoskanonos/piper-tts-models-de/resolve/main/de_DE-audio_book-medium.onnx',
-  miro:     HF + 'OpenVoiceOS/pipertts_de-DE_miro/resolve/main/miro_de-DE.onnx',
-  dii:      HF + 'OpenVoiceOS/pipertts_de-DE_dii/resolve/main/dii_de-DE.onnx',
-  emotion:  HF + 'rhasspy/piper-voices/resolve/main/de/de_DE/thorsten_emotional/medium/de_DE-thorsten_emotional-medium.onnx',
-  thorsten: HF + 'rhasspy/piper-voices/resolve/main/de/de_DE/thorsten/medium/de_DE-thorsten-medium.onnx',
-  mls:      HF + 'rhasspy/piper-voices/resolve/main/de/de_DE/mls/medium/de_DE-mls-medium.onnx'
+  hoerbuch: HF + 'domoskanonos/piper-tts-models-de/resolve/main/de_DE-audio_book-medium.onnx'
 };
+
+importScripts('pocket-engine.js');   // new voices (Kyutai Pocket TTS)
 
 let engineReady = null, phonemizer = null, phonOut = '';
 let session = null, meta = null, voiceId = null, loadingVoice = null;
@@ -60,10 +57,8 @@ async function fetchParts(key, parts, size, label){
 function initEngine(){
   if(engineReady) return engineReady;
   engineReady = (async () => {
-    importScripts(BASE + 'engine/ort.wasm.min.js', BASE + 'engine/piper_phonemize.js');
-    self.ort.env.wasm.numThreads = 1;
-    self.ort.env.wasm.proxy = false;
-    self.ort.env.wasm.wasmPaths = BASE + 'engine/';
+    pkEnsureOrt();
+    importScripts(BASE + 'engine/piper_phonemize.js');
     const data = await fetchParts('ppdata', PPDATA.parts, PPDATA.size, 'Sprach-Engine');
     const wasm = await (await fetch(BASE + 'engine/piper_phonemize.wasm')).arrayBuffer();
     phonemizer = await self.createPiperPhonemize({
@@ -80,6 +75,8 @@ function initEngine(){
 }
 
 async function loadVoice(id){
+  if(id === 'pocket'){ await pkLoad(false); return; }
+  if(id === 'pocket-dec'){ await pkLoadDecoder(); return; }
   if(voiceId === id && session) return;
   await initEngine();
   const url = MODELS[id]; if(!url) throw new Error('Unbekannte Stimme');
@@ -122,6 +119,7 @@ function toIds(phs){
 }
 
 async function synth(job){
+  if(job.voice === 'pocket') return pkSynth(job);
   const phs = phonemize(job.text);
   if(!phs.length) return new Float32Array(0);
   const ids = toIds(phs);
@@ -145,9 +143,20 @@ async function pump(){
   while(queue.length){
     const job = queue.shift();
     try{
+      if(job.type === 'decode'){   // second worker: latents -> audio, in parallel to the first one
+        await pkLoadDecoder();
+        const audio = await pkDecode(job.chunks);
+        post({type:'audio', id: job.id, audio, sampleRate: 24000}, [audio.buffer]);
+        continue;
+      }
       await loadVoice(job.voice);
+      if(job.voice === 'pocket' && job.mode === 'latents'){
+        const chunks = await pkLatents(job);
+        post({type:'latents', id: job.id, chunks}, chunks.map(c => c.buffer));
+        continue;
+      }
       const audio = await synth(job);
-      post({type:'audio', id: job.id, audio, sampleRate: meta.sample_rate}, [audio.buffer]);
+      post({type:'audio', id: job.id, audio, sampleRate: job.voice === 'pocket' ? 24000 : meta.sample_rate}, [audio.buffer]);
     }catch(e){
       post({type:'error', id: job.id, message: String(e && e.message || e)});
     }
@@ -161,12 +170,12 @@ self.onmessage = async e => {
     try{ loadingVoice = m.voice; await loadVoice(m.voice); post({type:'ready', voice: m.voice}); }
     catch(err){ post({type:'loadError', voice: m.voice, message: String(err && err.message || err)}); }
     finally{ loadingVoice = null; }
-  } else if(m.type === 'synth'){
+  } else if(m.type === 'synth' || m.type === 'decode'){
     queue.push(m); pump();
   } else if(m.type === 'reset'){
     queue = [];
   } else if(m.type === 'isCached'){
-    const ok = (await cacheHas('voice-' + m.voice)) && (await cacheHas('cfg-' + m.voice)) && (await cacheHas('ppdata'));
+    const ok = m.voice === 'pocket' ? await pkIsCached() : (await cacheHas('voice-' + m.voice)) && (await cacheHas('cfg-' + m.voice)) && (await cacheHas('ppdata'));
     post({type:'cached', voice: m.voice, value: ok});
   }
 };

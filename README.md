@@ -9,13 +9,9 @@ Liest lange PDFs mit natürlichen deutschen Neural-Stimmen vor, direkt auf dem G
 
 ## Stimmen
 
-Die Stimmmodelle werden beim ersten Gebrauch direkt von Hugging Face geladen und nicht in diesem Repository verteilt:
-
-- Hörbuch: [domoskanonos/piper-tts-models-de](https://huggingface.co/domoskanonos/piper-tts-models-de) (MIT)
-- Anna, Clara, Lena, Marie, Sophie, Hanna: [Piper de_DE mls](https://huggingface.co/rhasspy/piper-voices) (CC BY 4.0, Multilingual LibriSpeech)
-- Thorsten und Thorsten emotional: [Thorsten-Voice](https://huggingface.co/rhasspy/piper-voices) (CC0)
-- Miro und Dii: [OpenVoiceOS](https://huggingface.co/OpenVoiceOS) (CC BY-NC-ND 4.0, nur nicht-kommerziell)
+- **Anna, Eve, Mary, Azelma, Jürgen, Michael, Giovanni, Javert:** [Pocket TTS](https://huggingface.co/kyutai/pocket-tts) von Kyutai, deutsches Modell (CC BY 4.0). Für den Browser nach ONNX umgewandelt (Sprachmodell 8-Bit, Decoder in 16-Bit gespeichert) und unter `pocket/` abgelegt, inklusive der vorberechneten Stimmprofile.
+- **Hörbuch:** [domoskanonos/piper-tts-models-de](https://huggingface.co/domoskanonos/piper-tts-models-de) (MIT), wird beim ersten Gebrauch direkt von Hugging Face geladen.
 
 ## Technik
 
-[Piper](https://github.com/rhasspy/piper) über [piper-wasm](https://github.com/diffusion-studio/piper-wasm) (MIT) und [ONNX Runtime Web](https://github.com/microsoft/onnxruntime) (MIT); PDF-Auslesen mit [PDF.js](https://github.com/mozilla/pdf.js) (Apache 2.0).
+Pocket TTS läuft mit [ONNX Runtime Web](https://github.com/microsoft/onnxruntime) (MIT), auf zwei Rechenkerne verteilt. Die Hörbuch-Stimme nutzt [Piper](https://github.com/rhasspy/piper) über [piper-wasm](https://github.com/diffusion-studio/piper-wasm) (MIT); PDF-Auslesen mit [PDF.js](https://github.com/mozilla/pdf.js) (Apache 2.0).
