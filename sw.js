@@ -1,5 +1,5 @@
 /* PDF-Vorleser – Offline-Speicher für die App-Dateien */
-const VERSION = '2bbb7f4d97';
+const VERSION = '4c9228f6d1';
 const SHELL = 'vorleser-shell-' + VERSION;
 const RUNTIME = 'vorleser-runtime-v1';
 const FILES = ["./", "index.html", "manifest.webmanifest", "icon-180.png", "icon-192.png", "icon-512.png", "tts-worker-839619cc.js", "pocket-engine-839619cc.js", "lame.min.js", "lib/pdf.min.js", "lib/pdf.worker.min.js", "engine/ort.wasm.min.js", "engine/piper_phonemize.js", "engine/piper_phonemize.wasm", "engine/ort-wasm-simd.wasm"];

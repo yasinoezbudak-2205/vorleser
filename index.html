@@ -139,9 +139,14 @@ button:focus-visible,input:focus-visible,select:focus-visible,textarea:focus-vis
 .big-title{font-family:var(--f-display);font-weight:700;font-size:22px;letter-spacing:-.015em;line-height:1.15;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .voice-btn{font-size:14px;color:var(--muted);display:inline-flex;align-items:center;gap:6px;margin-top:2px}
 .voice-btn b{color:var(--accent);font-weight:600}
-.prep-btn{display:block;margin-top:8px;font-size:12.5px;font-weight:600;color:var(--muted);background:var(--raise);border-radius:999px;padding:5px 11px;max-width:100%;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;text-align:left}
-.prep-btn.run{color:var(--accent)}
+.prep-btn{display:flex;align-items:center;gap:7px;margin-top:9px;font-size:13.5px;font-weight:600;color:var(--accent-ink);background:var(--accent);border-radius:999px;padding:7px 13px;max-width:100%;text-align:left;line-height:1.25}
+.prep-btn.run{color:var(--accent);background:var(--raise)}
 .prep-btn.ok{color:var(--accent);background:transparent;padding-left:0}
+.prep-btn.pause{color:var(--text);background:var(--raise)}
+.prep-card{display:block;width:100%;text-align:left;margin:0 0 16px;padding:12px 14px;border-radius:14px;background:var(--raise);box-shadow:inset 0 0 0 1.5px var(--accent)}
+.prep-card b{display:block;font-size:15px;color:var(--accent)}
+.prep-card span{display:block;font-size:13px;color:var(--muted);margin-top:2px}
+.appver{font-size:11px;color:var(--muted);margin-top:8px;opacity:.7}
 .prep-bar{height:6px;border-radius:3px;background:var(--raise);overflow:hidden;margin:4px 0 12px}
 .prep-bar i{display:block;height:100%;width:0;background:var(--accent);transition:width .4s}
 .prep-facts{display:grid;gap:4px;font-size:14px;margin-bottom:16px}
@@ -311,6 +316,7 @@ textarea{min-height:130px;resize:vertical;font-family:var(--f-read)}
   <div class="sheet-in"><div class="grab"></div>
     <h3>Stimme</h3>
     <p class="sub">Die Stimmen werden einmal geladen (am besten im WLAN) und laufen danach offline auf deinem Gerät. Die acht neuen Stimmen teilen sich einen Download. Tippe auf ▶ für eine Hörprobe.</p>
+    <button class="prep-card" id="voicePrep" type="button" hidden><b id="voicePrepT">Ganzes Buch vorbereiten</b><span id="voicePrepS">Einmal berechnen, danach ohne Wartezeit hören</span></button>
     <div class="sheet-body" id="voiceList"></div>
     <div class="vgroup">Ausdruck</div>
     <div class="chips" id="exprChips">
@@ -319,6 +325,7 @@ textarea{min-height:130px;resize:vertical;font-family:var(--f-read)}
       <button class="chip" type="button" data-expr="1.35" aria-pressed="false">Lebhaft</button>
     </div>
     <p class="sub" style="margin:14px 0 0;font-size:12px">Neue Stimmen: Pocket TTS von Kyutai (CC BY 4.0), für das Gerät umgewandelt. Hörbuch-Stimme: Piper.</p>
+    <div class="appver">App-Stand: <span id="appVer">26.10.2026, 17:53</span></div>
   </div>
 </div>
 
@@ -993,20 +1000,22 @@ let prepUIt = 0;
 function prepUI(){
   const btn = $('#prepBtn'); if(!btn) return;
   const n = curNeural(), job = prepJob();
-  if(!bookId() || !neuralOK || (!n && !job)){ btn.hidden = true; return; }
+  const hide = () => { btn.hidden = true; const vc = $('#voicePrep'); if(vc) vc.hidden = true; };
+  if(!bookId() || !neuralOK || (!n && !job)){ hide(); return; }
   btn.hidden = false;
-  if(!segBlocks().length){ btn.hidden = true; return; }
+  if(!segBlocks().length){ hide(); return; }
   const v = prepVoice();
   if(!haveNow(v.key)){ ensureHave(v.key).then(r => { if(r) prepUI(); }); }
   const s = prepStats(), other = n && v.key !== n.key ? ` (${v.name})` : '';
-  let txt, cls = '';
-  if(s.full){ txt = `✓ Ganzes Buch bereit${other} · ohne Wartezeit`; cls = 'ok'; }
-  else if(PREP.running && !(job && job.on)){ txt = `Wird angehalten … ${s.pct} %`; }
-  else if(PREP.running){ txt = NV.loading && !playing ? 'Stimme wird geladen …' : `Wird vorbereitet${other} · ${s.pct} % · noch ca. ${durTxt(s.etaSec)}`; cls = 'run'; }
+  let txt, cls = '', sub = '';
+  if(s.full){ txt = `✓ Ganzes Buch bereit${other} · ohne Wartezeit`; cls = 'ok'; sub = 'Spielt die fertige Aufnahme ab, auch offline.'; }
+  else if(PREP.running && !(job && job.on)){ txt = `Wird angehalten … ${s.pct} %`; cls = 'pause'; }
+  else if(PREP.running){ txt = NV.loading && !playing ? 'Stimme wird geladen …' : `Wird vorbereitet${other} · ${s.pct} % · noch ca. ${durTxt(s.etaSec)}`; cls = 'run'; sub = 'Läuft im Hintergrund, du kannst nebenbei hören.'; }
   else if(job && job.on){ txt = `Vorbereitung startet …`; cls = 'run'; }
-  else if(s.pct > 0){ txt = `Vorbereitung pausiert${other} · ${s.pct} %`; }
-  else txt = 'Ganzes Buch vorbereiten · danach ohne Wartezeit';
+  else if(s.pct > 0){ txt = `▶ Vorbereitung fortsetzen${other} · ${s.pct} %`; cls = 'pause'; sub = 'Tippe, um weiterzumachen.'; }
+  else { txt = '⤓ Ganzes Buch vorbereiten'; sub = `Einmal berechnen (ca. ${durTxt(s.etaSec)}), danach ohne Wartezeit hören.`; }
   btn.textContent = txt; btn.className = 'prep-btn ' + cls;
+  const vc = $('#voicePrep'); if(vc){ vc.hidden = false; $('#voicePrepT').textContent = txt; $('#voicePrepS').textContent = sub || 'Antippen für Details.'; }
   if(PREP.running) prepMeta();
   const now = Date.now();
   if(!$('#sheetPrep').hidden && (now - prepUIt > 900 || !PREP.running)){ prepUIt = now; renderPrepSheet(); }
@@ -2108,6 +2117,7 @@ $('#chapList').addEventListener('click', e => {
 });
 $('#speedBtn').addEventListener('click', () => openSheet('sheetSpeed'));
 $('#prepBtn').addEventListener('click', () => openSheet('sheetPrep'));
+$('#voicePrep').addEventListener('click', () => openSheet('sheetPrep'));
 $('#prepGo').addEventListener('click', () => {
   const j = prepJob();
   if(PREP.running || (j && j.on)) prepPause();
