@@ -9,7 +9,7 @@ const MODELS = {
   hoerbuch: HF + 'domoskanonos/piper-tts-models-de/resolve/main/de_DE-audio_book-medium.onnx'
 };
 
-importScripts('pocket-engine-ace668ab.js');   // new voices (Kyutai Pocket TTS)
+importScripts('pocket-engine-839619cc.js');   // new voices (Kyutai Pocket TTS)
 
 let engineReady = null, phonemizer = null, phonOut = '';
 let session = null, meta = null, voiceId = null, loadingVoice = null;
@@ -137,12 +137,34 @@ async function synth(job){
   return new Float32Array(r.output.data);
 }
 
+/* whole-book preparation: finished audio is packed as MP3 so a long book fits on the phone */
+function encodeMp3(job){
+  if(!self.lamejs || !self.lamejs.Mp3Encoder) importScripts(BASE + 'lame.min.js');
+  const enc = new self.lamejs.Mp3Encoder(1, job.sr, job.kbps || 48), f = job.pcm, parts = [], step = 1152 * 16;
+  let total = 0;
+  const i16 = new Int16Array(step);
+  for(let o = 0; o < f.length; o += step){
+    const n = Math.min(step, f.length - o);
+    for(let k = 0; k < n; k++){ const v = f[o + k]; i16[k] = v <= -1 ? -32768 : v >= 1 ? 32767 : v * 32767; }
+    const b = enc.encodeBuffer(n === step ? i16 : i16.subarray(0, n)); if(b.length){ parts.push(new Uint8Array(b.buffer, b.byteOffset, b.length).slice()); total += b.length; }
+  }
+  const e = enc.flush(); if(e.length){ parts.push(new Uint8Array(e.buffer, e.byteOffset, e.length).slice()); total += e.length; }
+  const out = new Uint8Array(total); let o = 0; for(const p of parts){ out.set(p, o); o += p.length; }
+  return out;
+}
+
 async function pump(){
   if(busy) return;
   busy = true;
   while(queue.length){
-    const job = queue.shift();
+    let k = queue.findIndex(j => j.prio);   // reading aloud goes before the book preparation
+    const job = queue.splice(k < 0 ? 0 : k, 1)[0];
     try{
+      if(job.type === 'encode'){
+        const data = encodeMp3(job);
+        post({type:'mp3', id: job.id, data: data.buffer}, [data.buffer]);
+        continue;
+      }
       if(job.type === 'decode'){   // second worker: latents -> audio, in parallel to the first one
         await pkLoadDecoder();
         const audio = await pkDecode(job.chunks);
@@ -170,10 +192,10 @@ self.onmessage = async e => {
     try{ loadingVoice = m.voice; await loadVoice(m.voice); post({type:'ready', voice: m.voice}); }
     catch(err){ post({type:'loadError', voice: m.voice, message: String(err && err.message || err)}); }
     finally{ loadingVoice = null; }
-  } else if(m.type === 'synth' || m.type === 'decode'){
+  } else if(m.type === 'synth' || m.type === 'decode' || m.type === 'encode'){
     queue.push(m); pump();
   } else if(m.type === 'reset'){
-    queue = [];
+    queue = m.all ? [] : queue.filter(j => !j.prio);
   } else if(m.type === 'isCached'){
     const ok = m.voice === 'pocket' ? await pkIsCached() : (await cacheHas('voice-' + m.voice)) && (await cacheHas('cfg-' + m.voice)) && (await cacheHas('ppdata'));
     post({type:'cached', voice: m.voice, value: ok});

@@ -139,6 +139,13 @@ button:focus-visible,input:focus-visible,select:focus-visible,textarea:focus-vis
 .big-title{font-family:var(--f-display);font-weight:700;font-size:22px;letter-spacing:-.015em;line-height:1.15;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .voice-btn{font-size:14px;color:var(--muted);display:inline-flex;align-items:center;gap:6px;margin-top:2px}
 .voice-btn b{color:var(--accent);font-weight:600}
+.prep-btn{display:block;margin-top:8px;font-size:12.5px;font-weight:600;color:var(--muted);background:var(--raise);border-radius:999px;padding:5px 11px;max-width:100%;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;text-align:left}
+.prep-btn.run{color:var(--accent)}
+.prep-btn.ok{color:var(--accent);background:transparent;padding-left:0}
+.prep-bar{height:6px;border-radius:3px;background:var(--raise);overflow:hidden;margin:4px 0 12px}
+.prep-bar i{display:block;height:100%;width:0;background:var(--accent);transition:width .4s}
+.prep-facts{display:grid;gap:4px;font-size:14px;margin-bottom:16px}
+.prep-actions{display:flex;flex-wrap:wrap;gap:10px}
 .scrub{display:flex;flex-direction:column;gap:4px}
 input[type=range]{width:100%;accent-color:var(--accent);margin:0;height:22px}
 .times{display:flex;justify-content:space-between;font-size:12px;color:var(--muted)}
@@ -279,6 +286,7 @@ textarea{min-height:130px;resize:vertical;font-family:var(--f-read)}
         <button class="chap-line" id="chapLine" type="button" hidden><span id="chapEyebrow"></span><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.8" stroke-linecap="round" stroke-linejoin="round"><path d="m9 6 6 6-6 6"/></svg></button>
         <div class="big-title" id="plTitle"></div>
         <button class="voice-btn" id="voiceBtn" type="button">Stimme: <b id="voiceName">–</b> <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="m6 9 6 6 6-6"/></svg></button>
+        <button class="prep-btn" id="prepBtn" type="button" hidden></button>
       </div>
       <button class="round chap-btn" id="chapBtn" type="button" aria-label="Kapitelübersicht" title="Kapitel"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M9 6h11M9 12h11M9 18h11"/><circle cx="4.5" cy="6" r="1.2" fill="currentColor" stroke="none"/><circle cx="4.5" cy="12" r="1.2" fill="currentColor" stroke="none"/><circle cx="4.5" cy="18" r="1.2" fill="currentColor" stroke="none"/></svg></button>
     </div>
@@ -314,9 +322,20 @@ textarea{min-height:130px;resize:vertical;font-family:var(--f-read)}
   </div>
 </div>
 
+<div class="sheet" id="sheetPrep" hidden role="dialog" aria-label="Ganzes Buch vorbereiten">
+  <div class="sheet-in"><div class="grab"></div>
+    <h3 id="prepTitle">Ganzes Buch vorbereiten</h3>
+    <p class="sub" id="prepSub"></p>
+    <div class="prep-bar"><i id="prepBarI"></i></div>
+    <div class="prep-facts" id="prepFacts"></div>
+    <div class="prep-actions"><button class="btn primary" id="prepGo" type="button">Jetzt vorbereiten</button><button class="btn danger" id="prepDel" type="button" hidden>Vorbereitetes Audio löschen</button></div>
+    <p class="sub" id="prepNote" style="margin:14px 0 0;font-size:12px">Lass die App dafür geöffnet, am besten am Ladekabel. Du kannst nebenbei weiterhören. Schließt du die App, geht es beim nächsten Öffnen an derselben Stelle weiter.</p>
+  </div>
+</div>
+
 <div class="sheet" id="sheetSpeed" hidden role="dialog" aria-label="Tempo">
   <div class="sheet-in"><div class="grab"></div>
-    <h3>Tempo</h3><p class="sub">Gilt ab dem nächsten Satz.</p>
+    <h3>Tempo</h3><p class="sub">Wirkt sofort.</p>
     <div class="chips" id="speedChips"></div>
   </div>
 </div>
@@ -481,13 +500,14 @@ function voiceLabel(){
   const n = curNeural(); if(n) return n.name;
   const d = curDevice(); return d ? prettyName(d) : 'keine';
 }
-function updateVoiceLabel(){ $('#voiceName').textContent = voiceLabel(); renderMini(); }
+function updateVoiceLabel(){ $('#voiceName').textContent = voiceLabel(); renderMini(); try{ prepUI(); }catch(e){} }
 
 /* ---------- Neural engine (worker) ---------- */
+const WORKER_URL = 'tts-worker-839619cc.js';
 const NV = { worker:null, ready:null, loading:null, waiters:[], reqs:new Map(), nextId:1, cache:new Map(), keyBase:'', ctx:null, src:null, cached:{}, prog:{} };
 function nWorker(){
   if(NV.worker) return NV.worker;
-  try{ NV.worker = new Worker('tts-worker-ace668ab.js'); }
+  try{ NV.worker = new Worker(WORKER_URL); }
   catch(e){ neuralOK = false; throw new Error('Neural-Stimmen werden in dieser Ansicht nicht unterstützt.'); }
   NV.worker.onmessage = onWorkerMsg;
   NV.worker.onerror = e => failLoad(e.message || 'Die Sprach-Engine konnte nicht starten.');
@@ -497,10 +517,10 @@ function nWorker(){
 function decWorker(){
   if(NV.dec !== undefined) return NV.dec;
   try{
-    NV.dec = new Worker('tts-worker-ace668ab.js');
+    NV.dec = new Worker(WORKER_URL);
     NV.dec.onmessage = e => {
       const m = e.data;
-      if(m.type === 'audio' || m.type === 'error') onWorkerMsg(e);
+      if(m.type === 'audio' || m.type === 'error' || m.type === 'mp3') onWorkerMsg(e);
       else if(m.type === 'ready') NV.decReady = true;
       else if(m.type === 'loadError') NV.decReady = false;
     };
@@ -512,7 +532,7 @@ function onWorkerMsg(e){
   const m = e.data;
   if(m.type === 'latents'){
     if(!NV.reqs.has(m.id)) return;
-    if(NV.dec && NV.decReady) NV.dec.postMessage({ type: 'decode', id: m.id, chunks: m.chunks }, m.chunks.map(c => c.buffer));
+    if(NV.dec && NV.decReady) NV.dec.postMessage({ type: 'decode', id: m.id, chunks: m.chunks, prio: !!NV.reqs.get(m.id).live }, m.chunks.map(c => c.buffer));
     else { const r = NV.reqs.get(m.id); NV.reqs.delete(m.id); r.rej(new Error('Decoder nicht bereit')); }
   } else if(m.type === 'progress'){
     const model = NV.loading;
@@ -524,12 +544,13 @@ function onWorkerMsg(e){
     if(m.voice === 'pocket' && decWorker() && !NV.decReady) NV.dec.postMessage({ type: 'load', voice: 'pocket-dec' });
     const w = NV.waiters; NV.waiters = []; w.forEach(x => x.res());
     plStatus(''); if(!$('#sheetVoice').hidden) renderVoices();
+    try{ prepUI(); }catch(e){}
   } else if(m.type === 'loadError'){
     failLoad(m.message);
-  } else if(m.type === 'audio' || m.type === 'error'){
+  } else if(m.type === 'audio' || m.type === 'error' || m.type === 'mp3'){
     const r = NV.reqs.get(m.id); if(!r) return;
     NV.reqs.delete(m.id);
-    m.type === 'audio' ? r.res(m) : r.rej(new Error(m.message));
+    m.type === 'error' ? r.rej(new Error(m.message || 'Fehler beim Rechnen')) : r.res(m);
   } else if(m.type === 'cached'){
     if(m.value && NV.autoWarm === m.voice && !NV.ready && !NV.loading && !playing){ NV.autoWarm = null; loadModel(m.voice).catch(() => {}); }
     NV.cached[m.voice] = m.value; if(!$('#sheetVoice').hidden) renderVoices();
@@ -570,13 +591,18 @@ function ensureCtx(){
   }catch(e){}
 }
 const keyBase = () => { const n = curNeural(); return (n ? n.key : '') + '|' + expr; };
-function nReset(){ NV.cache.clear(); NV.reqs.clear(); NV.keyBase = keyBase(); if(NV.worker) NV.worker.postMessage({type:'reset'}); if(NV.dec) NV.dec.postMessage({type:'reset'}); }
+function nReset(all){
+  // drops what playback asked for; the book preparation keeps its place unless a different book is opened
+  const old = []; for(const [id, x] of NV.reqs) if(all || x.live){ old.push(x); NV.reqs.delete(id); }
+  NV.cache.clear(); old.forEach(x => x.rej(new Error('abgebrochen'))); NV.keyBase = keyBase();
+  if(NV.worker) NV.worker.postMessage({type:'reset', all: !!all}); if(NV.dec) NV.dec.postMessage({type:'reset', all: !!all});
+}
 function synthReq(text, v){
   const id = NV.nextId++;
   return new Promise((res, rej) => {
-    NV.reqs.set(id, {res, rej});
+    NV.reqs.set(id, {res, rej, live: true});
     const split = v.model === 'pocket' && NV.dec && NV.decReady;
-    nWorker().postMessage({type:'synth', id, voice: v.model, speaker: v.speaker || null, text, rate: 1, expr, mode: split ? 'latents' : undefined});
+    nWorker().postMessage({type:'synth', id, voice: v.model, speaker: v.speaker || null, text, rate: 1, expr, mode: split ? 'latents' : undefined, prio: true});
   });
 }
 function getAudio(i){
@@ -613,7 +639,7 @@ function pruneCache(i){
 const AHEAD_SEC = 240; // keep about four minutes of speech computed ahead
 function fillAhead(from){
   const lim = AHEAD_SEC * cpsNow(); let chars = 0;
-  for(let k = from; k < doc.sentences.length && chars < lim; k++){ getAudio(k).catch(() => {}); chars += doc.sentences[k].t.length; }
+  for(let k = from; k < doc.sentences.length && chars < lim; k++){ if(isStored(k)) continue; getAudio(k).catch(() => {}); chars += doc.sentences[k].t.length; }
 }
 
 /* sentences are joined into chunks (first one short for a quick start, then ~45 s) that never cross a chapter */
@@ -624,7 +650,7 @@ function chunkRange(start, n){
   const limChars = lim * cpsNow();
   let e = start, chars = 0;
   do { chars += doc.sentences[e].t.length; e++; }
-  while(e < cEnd && chars < limChars && (n > 1 || chars + doc.sentences[e].t.length <= limChars * 1.5));   // early chunks stay short for a quick start
+  while(e < cEnd && !isStored(e) && chars < limChars && (n > 1 || chars + doc.sentences[e].t.length <= limChars * 1.5));   // early chunks stay short for a quick start
   return e;
 }
 async function buildChunk(start, n){
@@ -684,20 +710,25 @@ function playChunk(ch, onend){
     a.src = AE.url; a.volume = 1;
     try{ a.preservesPitch = true; a.webkitPreservesPitch = true; }catch(e){}
     a.defaultPlaybackRate = a.playbackRate = ch.start < 0 ? 1 : rf();
+    if(ch.seek){ const at = ch.seek, go = () => { try{ a.currentTime = at; }catch(e){} }; if(a.readyState >= 1) go(); else a.addEventListener('loadedmetadata', go, { once: true }); }
     const pr = a.play(); if(pr && pr.catch) pr.catch(fallback);
     return;
   }
   playChunkWA(ch, onend);
 }
-function playChunkWA(ch, onend){
+async function playChunkWA(ch, onend){
   const ctx = NV.ctx;
+  if(!ch.f32 && ch.blob){
+    try{ const buf = await ctx.decodeAudioData(await ch.blob.arrayBuffer()); ch.f32 = buf.getChannelData(0); ch.sr = buf.sampleRate; }catch(e){ return; }
+    if(NV.chunk !== ch) return;
+  }
   const buf = ctx.createBuffer(1, Math.max(1, ch.f32.length), ch.sr); buf.getChannelData(0).set(ch.f32);
   const src = ctx.createBufferSource(); src.buffer = buf; src.connect(ctx.destination);
   const r = ch.start < 0 ? 1 : rf(); if(r !== 1) src.playbackRate.value = r;
-  const t0 = ctx.currentTime;
-  const mine = { stop(){ src.onended = null; try{ src.stop(); }catch(e){} }, clock: () => (ctx.currentTime - t0) * r };
+  const t0 = ctx.currentTime, at = ch.seek || 0;
+  const mine = { stop(){ src.onended = null; try{ src.stop(); }catch(e){} }, clock: () => at + (ctx.currentTime - t0) * r };
   src.onended = () => { if(NV.src === mine){ NV.src = null; onend && onend(); } };
-  NV.src = mine; src.start();
+  NV.src = mine; src.start(0, at);
 }
 function playBuffer(res, padSec, onend){
   const pad = Math.round(res.sampleRate * padSec), f32 = new Float32Array(res.audio.length + pad); f32.set(res.audio);
@@ -714,6 +745,17 @@ function trackChunk(){
 async function nPlay(i){
   const my = token;
   mark(i, true);
+  let st = null;
+  if(isStored(i) || (curNeural() && !haveNow(curNeural().key))){ try{ st = await storedChunk(i); }catch(e){} }
+  if(my !== token || !playing) return;
+  if(st){
+    // prepared audio: just play it, nothing has to be computed
+    CH.next = null; setBusy(false);
+    playChunk(st, () => { if(my === token && playing && sentenceTo(st.end)) nPlay(st.end); });
+    updatePositionState(true);
+    if(st.end < doc.sentences.length && !isStored(st.end)) loadModel(curNeural().model).then(() => { if(my === token && playing) fillAhead(st.end); }).catch(() => {});
+    return;
+  }
   const t = setTimeout(() => { if(my === token) setBusy(true); }, 350);
   let ch;
   try{
@@ -732,9 +774,261 @@ async function nPlay(i){
   CH.n++;
   pruneCache(i);
   fillAhead(ch.end);
-  if(ch.end < doc.sentences.length){ const p = buildChunk(ch.end, CH.n); p.catch(() => {}); CH.next = { start: ch.end, key: keyBase(), p }; }
+  if(ch.end < doc.sentences.length && !isStored(ch.end)){ const p = buildChunk(ch.end, CH.n); p.catch(() => {}); CH.next = { start: ch.end, key: keyBase(), p }; }
   playChunk(ch, () => { if(my === token && playing && sentenceTo(ch.end)) nPlay(ch.end); });
   updatePositionState(true);
+}
+
+/* ---------- Whole book prepared ahead ----------
+   The chosen voice computes the book once, block by block (about a minute each), on its own pair of workers.
+   Each block is packed as MP3 and kept in IndexedDB on the device. Playback then simply plays the stored
+   audio: no waiting, instant jumps and tempo. Blocks are addressed by their text, so they survive restarts. */
+const BLOCK_CHARS = 900, MP3_KBPS = 48, MP3_DELAY = 0.048;
+const PB = { db:null, segFor:null, blocks:[], of:null, chars:0, haveFor:null, have:{}, loading:{} };
+const bookId = () => doc.libId || null;
+function audioDB(){
+  if(PB.db) return PB.db;
+  PB.db = new Promise((res, rej) => {
+    if(!('indexedDB' in window)){ rej(new Error('Kein Speicher')); return; }
+    let r; try{ r = indexedDB.open('vorleser-audio', 1); }catch(e){ rej(e); return; }
+    r.onupgradeneeded = () => { const d = r.result; const m = d.createObjectStore('meta', { keyPath: 'key' }); m.createIndex('bv', ['book', 'voice']); m.createIndex('book', 'book'); d.createObjectStore('mp3'); };
+    r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error);
+  });
+  PB.db.catch(() => { PB.db = null; });
+  return PB.db;
+}
+const idbDone = tx => new Promise((res, rej) => { tx.oncomplete = () => res(); tx.onerror = tx.onabort = () => rej(tx.error || new Error('Speichern fehlgeschlagen')); });
+const idbVal = r => new Promise((res, rej) => { r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error); });
+/* fixed split of the book into blocks that never cross a chapter */
+function segBlocks(){
+  const S = doc.sentences;
+  if(PB.segFor === S) return PB.blocks;
+  PB.segFor = S; PB.blocks = []; PB.of = new Int32Array(S.length); PB.chars = 0;
+  const ranges = doc.chapters && doc.chapters.length ? doc.chapters.map(c => [c.start, c.end]) : [[0, S.length]];
+  for(const [cs, ce] of ranges){
+    let s = cs;
+    while(s < ce){
+      let e = s, ch = 0, txt = '';
+      do { ch += S[e].t.length; txt += S[e].t + '\n'; e++; } while(e < ce && ch < BLOCK_CHARS);
+      const b = PB.blocks.length;
+      PB.blocks.push({ start: s, end: e, chars: ch, h: fnv(txt).toString(16) + fnv(txt.split('').reverse().join('')).toString(16) + ch.toString(36) });
+      for(let i = s; i < e; i++) PB.of[i] = b;
+      PB.chars += ch; s = e;
+    }
+  }
+  return PB.blocks;
+}
+/* which blocks are already stored for a voice (loaded once per book and voice) */
+async function ensureHave(vkey){
+  const book = bookId(); if(!book) return null;
+  segBlocks();
+  if(PB.haveFor !== PB.segFor){ PB.haveFor = PB.segFor; PB.have = {}; PB.loading = {}; }
+  if(PB.have[vkey]) return PB.have[vkey];
+  if(!PB.loading[vkey]) PB.loading[vkey] = (async () => {
+    const db = await audioDB();
+    const metas = await idbVal(db.transaction('meta').objectStore('meta').index('bv').getAll([book, vkey]));
+    const byH = new Map(metas.map(m => [m.h, m]));
+    const map = new Map();
+    PB.blocks.forEach((b, k) => { const m = byH.get(b.h); if(m) map.set(k, m); });
+    if(PB.haveFor === PB.segFor) PB.have[vkey] = map;
+    applyStoredDur(vkey);
+    return map;
+  })();
+  try{ return await PB.loading[vkey]; }catch(e){ delete PB.loading[vkey]; return null; }
+}
+function haveNow(vkey){ return PB.haveFor === doc.sentences && PB.have[vkey] || null; }
+function isStored(i){
+  const n = curNeural(); if(!n) return false;
+  const h = haveNow(n.key); return !!(h && PB.of && h.has(PB.of[i]));
+}
+/* stored blocks know their exact sentence lengths, so the clock is exact there */
+function applyStoredDur(vkey){
+  const n = curNeural(), h = haveNow(vkey); if(!n || n.key !== vkey || !h) return;
+  const arr = durArr();
+  for(const [b, m] of h){ const B = PB.blocks[b]; for(let k = 0; k < m.offs.length; k++) arr[B.start + k] = (k + 1 < m.offs.length ? m.offs[k + 1] : m.dur) - m.offs[k]; }
+}
+async function storedChunk(i){
+  const n = curNeural(); if(!n || !bookId()) return null;
+  const h = haveNow(n.key) || await ensureHave(n.key);
+  if(!h) return null;
+  const b = PB.of[i], m = h.get(b); if(!m) return null;
+  let blob = null;
+  try{ const db = await audioDB(); blob = await idbVal(db.transaction('mp3').objectStore('mp3').get(m.key)); }catch(e){}
+  if(!blob){ h.delete(b); return null; }
+  const B = PB.blocks[b], offs = m.offs.map(o => o + MP3_DELAY);
+  return { start: B.start, end: B.end, offs, dur: m.dur + MP3_DELAY, sr: m.sr, f32: null, blob, seek: i > B.start ? offs[i - B.start] : 0, stored: true };
+}
+
+/* preparing uses the same two workers as playback, with lower priority: reading aloud always goes first */
+function nCall(w, msg, transfer){ return new Promise((res, rej) => { const id = NV.nextId++; NV.reqs.set(id, { res, rej, live: false }); w.postMessage({ ...msg, id }, transfer || []); }); }
+const prepSynth = (v, text, ex) => nCall(nWorker(), { type: 'synth', voice: v.model, speaker: v.speaker || null, text, rate: 1, expr: ex, mode: v.model === 'pocket' && NV.dec && NV.decReady ? 'latents' : undefined, prio: false });
+const prepEncode = (f32, sr) => nCall(NV.dec && NV.decReady ? NV.dec : nWorker(), { type: 'encode', pcm: f32, sr, kbps: MP3_KBPS, prio: false }, [f32.buffer]);
+
+/* the preparation job of a book: { voice, expr, on, done } kept per book */
+const PREP = { running:false, err:'', wall:0, audio:0, keep:null, cur:-1, del:false };
+const prepJobs = () => store.get('prep', {});
+function prepJob(){ const b = bookId(); return b ? prepJobs()[b] || null : null; }
+function setPrepJob(j, book){ const all = prepJobs(), b = book || bookId(); if(!b) return; if(j) all[b] = j; else delete all[b]; store.set('prep', all); }
+function prepVoice(){ const j = prepJob(), n = curNeural(); return (j && VBY[j.voice]) || n || VBY['pk-anna']; }
+function prepStats(){
+  const v = prepVoice(), blocks = segBlocks(), h = haveNow(v.key);
+  let doneCh = 0; if(h) for(const b of h.keys()) doneCh += blocks[b] ? blocks[b].chars : 0;
+  const total = PB.chars || 1, cps = (cpsStats[v.key] && cpsStats[v.key].n >= 5) ? Math.min(22, Math.max(7, cpsStats[v.key].c / cpsStats[v.key].t)) : CPS;
+  const listenSec = total / cps, restAudio = (total - doneCh) / cps;
+  const speed = PREP.wall > 60 && PREP.audio > 0 ? PREP.audio / PREP.wall : 1.6;   // audio seconds made per second; first guess until measured
+  return { v, pct: Math.min(100, Math.floor(doneCh / total * 100)), full: !!h && h.size === blocks.length, known: !!h, listenSec, mb: listenSec * MP3_KBPS / 8 / 1000, etaSec: restAudio / speed, measured: PREP.wall > 60 };
+}
+function nextPrepBlock(h){
+  const blocks = segBlocks(), n = blocks.length; if(!n) return -1;
+  const from = PB.of && PB.of[Math.min(idx, doc.sentences.length - 1)] || 0;
+  for(let k = 0; k < n; k++){ const b = (from + k) % n; if(!h.has(b) && b !== PREP.cur) return b; }
+  return -1;
+}
+async function prepStart(){
+  const n = curNeural(); if(!n || !bookId()) return;
+  setPrepJob({ voice: n.key, expr, on: true });
+  prepKeep(true); prepRun();
+}
+function prepPause(){ const j = prepJob(); if(j){ j.on = false; setPrepJob(j); } prepKeep(false); prepUI(); }
+async function prepRun(){
+  if(PREP.running) return;
+  const job = prepJob(); if(!job || !job.on || !neuralOK){ prepUI(); return; }
+  const v = VBY[job.voice]; if(!v){ setPrepJob(null); prepUI(); return; }
+  const docRef = doc.sentences, book = bookId();
+  const active = () => doc.sentences === docRef && bookId() === book && (prepJob() || {}).on && (prepJob() || {}).voice === v.key;
+  PREP.running = true; PREP.err = ''; PREP.wall = 0; PREP.audio = 0; prepUI();
+  if(!playing) keepAwake(true);
+  try{
+    const ln = curNeural();
+    if(!playing || (ln && ln.model === v.model)) await loadModel(v.model);   // otherwise the worker loads it next to the playing voice
+    const h = await ensureHave(v.key); if(!h) throw new Error('Der Speicher auf dem Gerät ist nicht verfügbar.');
+    let pending = null;   // the next block is already computing while the previous one is packed and stored
+    for(;;){
+      if(!active()) break;
+      const b = nextPrepBlock(h);
+      const started = b >= 0 ? prepCompute(b, v, job.expr) : null;
+      if(started) PREP.cur = b;
+      if(pending) await prepStore(pending, v, book, h);
+      if(!started) break;
+      pending = await started;
+      if(!active()) break;
+    }
+    PREP.cur = -1;
+    if(pending && active()) await prepStore(pending, v, book, h);
+    if(active() && h.size === segBlocks().length){
+      const j = prepJob(); j.done = true; j.on = false; setPrepJob(j);
+      toast(`Fertig: „${doc.name}“ ist komplett vorbereitet und spielt jetzt ohne Wartezeit.`);
+      renderLib();
+    }
+  }catch(e){ PREP.err = e.message || String(e); }
+  finally{
+    PREP.running = false; PREP.cur = -1;
+    if(!playing){ keepAwake(false); prepKeep(false); }
+    prepUI(); if(!$('#sheetChapters').hidden) renderChapters();
+  }
+}
+/* compute every sentence of a block (sentences playback already asked for are shared) */
+async function prepCompute(b, v, ex){
+  const B = segBlocks()[b], t0 = performance.now(), n = curNeural();
+  const sameLive = n && n.key === v.key && ex === expr;
+  const ps = [];
+  for(let i = B.start; i < B.end; i++){
+    const key = keyBase() + '|' + i, t = doc.sentences[i].t;
+    ps.push(sameLive && NV.cache.has(key) ? NV.cache.get(key).catch(() => prepSynth(v, t, ex)) : prepSynth(v, t, ex));
+  }
+  const res = await Promise.all(ps);
+  return { b, B, res, t0 };
+}
+async function prepStore(job, v, book, h){
+  const { b, B, res, t0 } = job;
+  const sr = res[0].sampleRate;
+  const pads = res.map((r, k) => Math.round(sr * (doc.paraEnd.has(B.start + k) ? 0.5 : 0.18)));
+  let total = 0; res.forEach((r, k) => { total += r.audio.length + pads[k]; });
+  const f32 = new Float32Array(total), offs = []; let o = 0;
+  res.forEach((r, k) => { offs.push(o / sr); f32.set(r.audio, o); o += r.audio.length + pads[k]; });
+  const dur = total / sr;
+  const enc = await prepEncode(f32, sr);
+  const key = v.key + '|' + B.h;
+  const meta = { key, book, voice: v.key, h: B.h, offs, dur, sr, size: enc.data.byteLength };
+  const db = await audioDB();
+  const tx = db.transaction(['meta', 'mp3'], 'readwrite');
+  tx.objectStore('mp3').put(new Blob([enc.data], { type: 'audio/mpeg' }), key);
+  tx.objectStore('meta').put(meta);
+  await idbDone(tx);
+  h.set(b, meta);
+  for(let i = B.start; i < B.end; i++) if(i > idx + 1) NV.cache.delete(keyBase() + '|' + i);   // stored now: keep memory small
+  applyStoredDur(v.key);
+  PREP.wall += (performance.now() - t0) / 1000; PREP.audio += dur;
+  prepUI();
+}
+async function audioDeleteBook(book, vkey){
+  try{
+    const db = await audioDB();
+    const metas = await idbVal(db.transaction('meta').objectStore('meta').index('book').getAll(book));
+    const tx = db.transaction(['meta', 'mp3'], 'readwrite');
+    for(const m of metas) if(!vkey || m.voice === vkey){ tx.objectStore('meta').delete(m.key); tx.objectStore('mp3').delete(m.key); }
+    await idbDone(tx);
+  }catch(e){}
+  if(book === bookId()){ if(vkey) delete PB.have[vkey]; else PB.have = {}; PB.loading = {}; }
+}
+/* keeps the app running while it prepares with a locked screen: a silent sound, like music apps */
+function prepKeep(on){
+  try{
+    if(on){
+      if(playing) return;
+      if(!PREP.keep){ const a = new Audio(); a.loop = true; a.setAttribute('playsinline', ''); a.src = URL.createObjectURL(wavBlob(new Float32Array(24000 * 4), 24000, 0)); PREP.keep = a; }
+      PREP.keep.play().catch(() => {});
+      prepMeta();
+    } else if(PREP.keep) PREP.keep.pause();
+  }catch(e){}
+}
+function prepMeta(){
+  try{
+    const ms = navigator.mediaSession; if(!ms || playing || typeof MediaMetadata === 'undefined' || !PREP.running) return;
+    const s = prepStats();
+    ms.metadata = new MediaMetadata({ title: `Wird vorbereitet · ${s.pct} %`, artist: doc.name || 'PDF-Vorleser', album: 'PDF-Vorleser' });
+  }catch(e){}
+}
+let prepUIt = 0;
+function prepUI(){
+  const btn = $('#prepBtn'); if(!btn) return;
+  const n = curNeural(), job = prepJob();
+  if(!bookId() || !neuralOK || (!n && !job)){ btn.hidden = true; return; }
+  btn.hidden = false;
+  if(!segBlocks().length){ btn.hidden = true; return; }
+  const v = prepVoice();
+  if(!haveNow(v.key)){ ensureHave(v.key).then(r => { if(r) prepUI(); }); }
+  const s = prepStats(), other = n && v.key !== n.key ? ` (${v.name})` : '';
+  let txt, cls = '';
+  if(s.full){ txt = `✓ Ganzes Buch bereit${other} · ohne Wartezeit`; cls = 'ok'; }
+  else if(PREP.running && !(job && job.on)){ txt = `Wird angehalten … ${s.pct} %`; }
+  else if(PREP.running){ txt = NV.loading && !playing ? 'Stimme wird geladen …' : `Wird vorbereitet${other} · ${s.pct} % · noch ca. ${durTxt(s.etaSec)}`; cls = 'run'; }
+  else if(job && job.on){ txt = `Vorbereitung startet …`; cls = 'run'; }
+  else if(s.pct > 0){ txt = `Vorbereitung pausiert${other} · ${s.pct} %`; }
+  else txt = 'Ganzes Buch vorbereiten · danach ohne Wartezeit';
+  btn.textContent = txt; btn.className = 'prep-btn ' + cls;
+  if(PREP.running) prepMeta();
+  const now = Date.now();
+  if(!$('#sheetPrep').hidden && (now - prepUIt > 900 || !PREP.running)){ prepUIt = now; renderPrepSheet(); }
+}
+function renderPrepSheet(){
+  const s = prepStats(), job = prepJob(), n = curNeural();
+  $('#prepTitle').textContent = s.full ? 'Ganzes Buch ist bereit' : 'Ganzes Buch vorbereiten';
+  $('#prepSub').textContent = s.full
+    ? `Die Stimme ${s.v.name} hat das ganze Buch vorbereitet. Der Vorleser spielt nur noch die fertige Aufnahme ab: ohne Wartezeit, auch offline, und Springen und Tempo wirken sofort.`
+    : `Die Stimme ${s.v.name} liest das ganze Buch einmal vorab und speichert es auf deinem Gerät. Danach spielt der Vorleser nur noch die fertige Aufnahme ab: keine Wartezeit mehr, auch offline, und Springen und Tempo wirken sofort.`;
+  $('#prepBarI').style.width = s.pct + '%';
+  const facts = [`Hörzeit: ca. ${durTxt(s.listenSec)}`, `Speicher: ca. ${Math.max(1, Math.round(s.mb))} MB`];
+  if(!s.full) facts.push(`Fertig: ${s.pct} %` + (s.pct < 100 ? ` · noch ca. ${durTxt(s.etaSec)}${s.measured ? '' : ' (wird nach ein paar Minuten genauer)'}` : ''));
+  if(PREP.err) facts.push('Unterbrochen: ' + PREP.err);
+  $('#prepFacts').innerHTML = facts.map(f => `<div>${esc(f)}</div>`).join('');
+  const go = $('#prepGo');
+  go.hidden = s.full;
+  go.textContent = PREP.running || (job && job.on) ? 'Pausieren' : s.pct > 0 ? 'Weiter vorbereiten' : 'Jetzt vorbereiten';
+  if(!PREP.running && !(job && job.on) && n && job && job.voice !== n.key && !s.full) go.textContent = `Mit ${n.name} vorbereiten`;
+  $('#prepDel').hidden = !(s.pct > 0 || s.full);
+  $('#prepDel').textContent = PREP.del ? 'Wirklich löschen?' : 'Vorbereitetes Audio löschen';
+  $('#prepNote').hidden = s.full;
 }
 
 /* ---------- Text extraction ---------- */
@@ -940,7 +1234,7 @@ function build(rawParas, meta){
   doc = { ...meta, paras: outParas, sentences, cum, paraEnd: new Set(outParas.map(p => p.s[p.s.length-1])), raw: rawParas, libId: meta.key ? libIdFor(meta.key) : null };
   doc.chapters = makeChapters(heads, doc);
   doc.done = new Set((meta.done || (doc.key ? store.get('done:' + doc.key, []) : [])).filter(i => i >= 0 && i < doc.chapters.length));
-  nReset();
+  nReset(true);
   const saved = doc.key ? store.get('pos:'+doc.key, 0) : 0;
   idx = (saved > 0 && saved < sentences.length) ? saved : 0;
   renderReader();
@@ -1257,6 +1551,7 @@ function speakFrom(i){
     if(NV.keyBase !== keyBase() || target < idx - 1 || target > idx + 3) nReset();
   }
   idx = target;
+  prepKeep(false);
   playing = true; setPlayUI(); keepAwake(true); startTicker();
   try{ bc && bc.postMessage('play'); }catch(e){}
   const my = token;
@@ -1307,7 +1602,8 @@ function stop(){
   stopNeuralAudio(); CH.next = null; DEV.t0 = 0;
   document.body.classList.remove('busy');
   stopTicker();
-  setPlayUI(); keepAwake(false);
+  setPlayUI(); keepAwake(PREP.running);
+  if(PREP.running) prepKeep(true);
   if(doc.key) store.set('pos:'+doc.key, idx);
   libSavePos();
   updateProgress();
@@ -1598,15 +1894,17 @@ function renderLib(){
     const nc = d.chapters || 0, started = (d.pos || 0) > 0;
     const meta = started ? (nc > 1 ? `Kap. ${(d.chapter || 0) + 1}/${nc} · ${st.pct} %` : d.pages > 1 ? `S. ${d.page || 1} / ${d.pages} · ${st.pct} %` : `${st.pct} %`)
       : (nc > 1 ? `${nc} Kapitel · neu` : d.pages > 1 ? `${d.pages} Seiten · neu` : 'neu');
+    const ready = (prepJobs()[d.id] || {}).done ? ' · ✓ bereit' : '';
     h += `<div class="tile${doc.libId === d.id ? ' now' : ''}" role="button" tabindex="0" data-open="${esc(d.id)}">
       ${coverHTML(d.name, d.pages > 1 ? `${d.pages} S.` : 'Text', 17)}
       <button class="tile-more" type="button" data-more="${esc(d.id)}" aria-label="Optionen für ${esc(d.name)}">${IC.more}</button>
       <span class="tile-name">${esc(d.name || 'Ohne Titel')}</span>
-      <span class="tile-meta">${meta}</span>
+      <span class="tile-meta">${meta}${ready}</span>
       <span class="bar"><i style="width:${st.pct}%"></i></span>
     </div>`;
   }
   grid.innerHTML = h;
+  try{ prepUI(); prepRun(); }catch(e){}
   $('#libNote').textContent = docs.length ? `${docs.length} gespeichert` : '';
   if(LIB.ready) $('#foot').textContent = (docs.length ? '' : 'Jede PDF, die du hinzufügst, landet hier, samt der Stelle, an der du aufgehört hast. ') + (LIB.local ? 'Deine Bibliothek ist nur auf diesem Gerät gespeichert.' : 'Nur du siehst deine Bibliothek.') + ' Die Stimmen rechnen direkt auf deinem Gerät.';
   renderHero();
@@ -1699,6 +1997,7 @@ function libDelete(id){
     await LIB.col.doc(id).delete();
     if(d.textAsset && LIB.assets){ try{ await LIB.assets.delete(d.textAsset); }catch(e){} }
   });
+  setPrepJob(null, id); audioDeleteBook(id);
   toast(`„${d.name}“ entfernt.`);
 }
 
@@ -1723,6 +2022,7 @@ function openSheet(id){
   openSheetId = id; $('#scrim').hidden = false; $('#' + id).hidden = false;
   if(id === 'sheetVoice') renderVoices();
   if(id === 'sheetSpeed') renderSpeedChips();
+  if(id === 'sheetPrep'){ PREP.del = false; renderPrepSheet(); }
   if(id === 'sheetSleep') sleepUI();
   if(id === 'sheetChapters'){ renderChapters(); requestAnimationFrame(() => { const r = $('#chapList .crow.cur'); if(r) r.scrollIntoView({ block: 'center' }); }); }
 }
@@ -1807,6 +2107,18 @@ $('#chapList').addEventListener('click', e => {
   speakFrom(c.start);
 });
 $('#speedBtn').addEventListener('click', () => openSheet('sheetSpeed'));
+$('#prepBtn').addEventListener('click', () => openSheet('sheetPrep'));
+$('#prepGo').addEventListener('click', () => {
+  const j = prepJob();
+  if(PREP.running || (j && j.on)) prepPause();
+  else { try{ navigator.storage && navigator.storage.persist && navigator.storage.persist(); }catch(e){} if(engine() === 'neural') ensureCtx(); prepStart(); }
+  renderPrepSheet();
+});
+$('#prepDel').addEventListener('click', async () => {
+  if(!PREP.del){ PREP.del = true; renderPrepSheet(); return; }
+  PREP.del = false; const v = prepVoice(); prepPause(); setPrepJob(null);
+  await audioDeleteBook(bookId(), v.key); prepUI(); renderPrepSheet(); renderLib(); toast('Vorbereitetes Audio gelöscht.');
+});
 $('#sleepBtn').addEventListener('click', () => openSheet('sheetSleep'));
 $('#speedChips').addEventListener('click', e => { const c = e.target.closest('[data-speed]'); if(c){ setRate(+c.dataset.speed); closeSheets(); } });
 $('#sleepChips').addEventListener('click', e => { const c = e.target.closest('[data-sleep]'); if(c){ setSleep(c.dataset.sleep); closeSheets(); } });
