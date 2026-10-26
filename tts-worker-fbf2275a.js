@@ -9,7 +9,7 @@ const MODELS = {
   hoerbuch: HF + 'domoskanonos/piper-tts-models-de/resolve/main/de_DE-audio_book-medium.onnx'
 };
 
-importScripts('pocket-engine-b17c163e.js');   // new voices (Kyutai Pocket TTS)
+importScripts('pocket-engine-fbf2275a.js');   // new voices (Kyutai Pocket TTS)
 
 let engineReady = null, phonemizer = null, phonOut = '';
 let session = null, meta = null, voiceId = null, loadingVoice = null;

@@ -1,8 +1,8 @@
 /* PDF-Vorleser – Offline-Speicher für die App-Dateien */
-const VERSION = '906ae0003c';
+const VERSION = '548b4089cf';
 const SHELL = 'vorleser-shell-' + VERSION;
 const RUNTIME = 'vorleser-runtime-v1';
-const FILES = ["./", "index.html", "manifest.webmanifest", "icon-180.png", "icon-192.png", "icon-512.png", "tts-worker-b17c163e.js", "pocket-engine-b17c163e.js", "lame.min.js", "lib/pdf.min.js", "lib/pdf.worker.min.js", "engine/ort.wasm.min.js", "engine/piper_phonemize.js", "engine/piper_phonemize.wasm", "engine/ort-wasm-simd.wasm"];
+const FILES = ["./", "index.html", "manifest.webmanifest", "icon-180.png", "icon-192.png", "icon-512.png", "tts-worker-fbf2275a.js", "pocket-engine-fbf2275a.js", "lame.min.js", "lib/pdf.min.js", "lib/pdf.worker.min.js", "engine/ort.wasm.min.js", "engine/piper_phonemize.js", "engine/piper_phonemize.wasm", "engine/ort-wasm-simd.wasm"];
 self.addEventListener('install', e => {
   e.waitUntil(caches.open(SHELL).then(c => c.addAll(FILES.map(f => new Request(f, { cache: 'reload' })))).then(() => self.skipWaiting()));
 });

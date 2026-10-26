@@ -325,7 +325,7 @@ textarea{min-height:130px;resize:vertical;font-family:var(--f-read)}
       <button class="chip" type="button" data-expr="1.35" aria-pressed="false">Lebhaft</button>
     </div>
     <p class="sub" style="margin:14px 0 0;font-size:12px">Neue Stimmen: Pocket TTS von Kyutai (CC BY 4.0), für das Gerät umgewandelt. Hörbuch-Stimme: Piper.</p>
-    <div class="appver">App-Stand: <span id="appVer">26.10.2026, 19:45</span></div>
+    <div class="appver">App-Stand: <span id="appVer">26.10.2026, 20:23</span></div>
   </div>
 </div>
 
@@ -510,7 +510,7 @@ function voiceLabel(){
 function updateVoiceLabel(){ $('#voiceName').textContent = voiceLabel(); renderMini(); try{ prepUI(); }catch(e){} }
 
 /* ---------- Neural engine (worker) ---------- */
-const WORKER_URL = 'tts-worker-b17c163e.js';
+const WORKER_URL = 'tts-worker-fbf2275a.js';
 const NV = { worker:null, ready:null, loading:null, waiters:[], reqs:new Map(), nextId:1, cache:new Map(), keyBase:'', ctx:null, src:null, cached:{}, prog:{} };
 function nWorker(){
   if(NV.worker) return NV.worker;
@@ -541,10 +541,7 @@ function onWorkerMsg(e){
     if(!NV.reqs.has(m.id)) return;
     if(NV.dec && NV.decReady){
       const live = !!NV.reqs.get(m.id).live;
-      NV.decN = (NV.decN || 0) + 1;
-      const pool = NV.dec2 && NV.dec2Ready ? [NV.dec, NV.dec2] : [NV.dec];
-      const w = live ? NV.dec : NV.decN % 4 === 0 ? NV.worker : pool[NV.decN % pool.length];   // the first worker has spare time while preparing
-      w.postMessage({ type: 'decode', id: m.id, chunks: m.chunks, prio: live }, m.chunks.map(c => c.buffer));
+      NV.dec.postMessage({ type: 'decode', id: m.id, chunks: m.chunks, prio: live }, m.chunks.map(c => c.buffer));
     }
     else { const r = NV.reqs.get(m.id); NV.reqs.delete(m.id); r.rej(new Error('Decoder nicht bereit')); }
   } else if(m.type === 'progress'){
@@ -912,9 +909,24 @@ function prepStats(){
   const exact = Math.min(100, doneCh / total * 100);
   return { v, pct: exact, pctTxt: exact >= 10 || exact === 0 ? String(Math.floor(exact)) : exact.toFixed(1).replace('.', ','), full: !!h && h.size === blocks.length, known: !!h, listenSec, mb: listenSec * MP3_KBPS / 8 / 1000, etaSec: restAudio / speed, measured, speed };
 }
+/* while someone listens, reading aloud comes first: the preparation only continues once about two minutes
+   ahead are ready, and it works on the part after that, so nothing is computed twice */
+async function prepGate(active){
+  while(playing && active() && engine() === 'neural' && liveBufferedSec() < 120) await new Promise(r => setTimeout(r, 1500));
+}
+function liveBufferedSec(){
+  const arr = durArr(); let sec = 0;
+  for(let k = idx; k < doc.sentences.length && sec < 300; k++){ if(isStored(k) || arr[k] > 0) sec += sentDur(k); else break; }
+  return sec;
+}
 function nextPrepBlock(h){
   const blocks = segBlocks(), n = blocks.length; if(!n) return -1;
-  const from = PB.of && PB.of[Math.min(idx, doc.sentences.length - 1)] || 0;
+  let start = Math.min(idx, doc.sentences.length - 1);
+  if(playing && engine() === 'neural'){   // skip what the listener's own computation is about to cover
+    const lim = AHEAD_SEC * cpsNow(); let ch = 0;
+    while(start < doc.sentences.length - 1 && ch < lim){ ch += doc.sentences[start].t.length; start++; }
+  }
+  const from = PB.of && PB.of[start] || 0;
   for(let k = 0; k < n; k++){ const b = (from + k) % n; if(!h.has(b) && b !== PREP.cur) return b; }
   return -1;
 }
@@ -935,10 +947,14 @@ async function prepRun(){
   try{
     const ln = curNeural();
     if(!playing || (ln && ln.model === v.model)) await loadModel(v.model);   // otherwise the worker loads it next to the playing voice
-    if(v.model === 'pocket') prepExtraDecoder(true);
+    if(v.model === 'pocket'){   // wait for the decoder worker, so the first worker never has to load the decoder too (memory)
+      for(let k = 0; k < 120 && !(NV.dec && NV.decReady) && active(); k++){ if(NV.ready === 'pocket' && NV.dec === undefined) decWorker(); await new Promise(r => setTimeout(r, 500)); }
+    }
     const h = await ensureHave(v.key); if(!h) throw new Error('Der Speicher auf dem Gerät ist nicht verfügbar.');
     let pending = null;   // the next block is already computing while the previous one is packed and stored
     for(;;){
+      if(!active()) break;
+      await prepGate(active);
       if(!active()) break;
       const b = nextPrepBlock(h);
       const started = b >= 0 ? prepCompute(b, v, job.expr) : null;

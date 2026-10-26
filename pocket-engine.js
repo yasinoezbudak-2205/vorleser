@@ -222,7 +222,7 @@ function pkRandn(){ let u = 0, v = 0; while(u === 0) u = Math.random(); while(v 
 /* Generation for up to B text pieces side by side (same voice). The step model reads all its weights once per
    frame no matter how many pieces it computes, so a batch of 4 costs far less than 4 single runs.
    KV memory is time-major [column][item][dims]; every item has its own valid columns (key mask) and positions. */
-async function pkSynthBatch(preps, voice, temp){
+async function pkSynthBatch(preps, voice, temp, between){
   const m = PK.meta, L = m.layers, HD = m.heads * m.head_dim, T = self.ort.Tensor, B = preps.length, LD = m.ldim;
   const idss = preps.map(p => pkTokenize(p.text));
   const maxFr = idss.map(ids => Math.ceil((ids.length / 3 + 2) * 12.5));
@@ -267,6 +267,7 @@ async function pkSynthBatch(preps, voice, temp){
   const sd = Math.sqrt(temp), s0 = new T('float32', new Float32Array(B), [B, 1]), t1 = new T('float32', new Float32Array(B).fill(1), [B, 1]);
   const noEmb = new Float32Array(0), yes = () => true;
   for(let i = 0; i < FR; i++){
+    if(between && i % 6 === 5) await between();   // let reading aloud in between, so it never waits long
     const r = await run(seq, 1, noEmb, 0, yes);
     for(let b = 0; b < B; b++){
       if(done[b]) continue;
@@ -324,7 +325,7 @@ async function pkLatentsMany(jobs, B, onJob, between){
   for(let g = 0; g < items.length; g += B){
     if(between) await between();
     const grp = items.slice(g, g + B);
-    const lats = await pkSynthBatch(grp.map(it => it.prep), voice, temp);
+    const lats = await pkSynthBatch(grp.map(it => it.prep), voice, temp, between);
     for(let q = 0; q < grp.length; q++){ const it = grp[q]; out[it.j][it.k] = lats[q]; if(--left[it.j] === 0) await onJob(it.j, out[it.j]); }
   }
 }
