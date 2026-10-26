@@ -9,7 +9,7 @@ const MODELS = {
   hoerbuch: HF + 'domoskanonos/piper-tts-models-de/resolve/main/de_DE-audio_book-medium.onnx'
 };
 
-importScripts('pocket-engine-839619cc.js');   // new voices (Kyutai Pocket TTS)
+importScripts('pocket-engine-b17c163e.js');   // new voices (Kyutai Pocket TTS)
 
 let engineReady = null, phonemizer = null, phonOut = '';
 let session = null, meta = null, voiceId = null, loadingVoice = null;
@@ -153,35 +153,55 @@ function encodeMp3(job){
   return out;
 }
 
+let gen = 0;   // bumped by a full reset: running book jobs stop early
+async function runJob(job){
+  try{
+    if(job.type === 'encode'){
+      const data = encodeMp3(job);
+      post({type:'mp3', id: job.id, data: data.buffer}, [data.buffer]);
+      return;
+    }
+    if(job.type === 'decode'){   // latents -> audio (mostly in the second worker, in parallel to the first one)
+      await pkLoadDecoder();
+      const audio = await pkDecode(job.chunks);
+      post({type:'audio', id: job.id, audio, sampleRate: 24000}, [audio.buffer]);
+      return;
+    }
+    if(job.type === 'synthMany'){   // book preparation: many sentences, computed 4 at a time
+      await loadVoice('pocket');
+      const my = gen;
+      const jobs = job.items.map(it => ({ text: it.text, speaker: job.speaker, expr: job.expr }));
+      await pkLatentsMany(jobs, job.batch || 4, async (j, chunks) => {
+        const id = job.items[j].id;
+        if(job.mode === 'latents'){ post({type:'latents', id, chunks}, chunks.map(c => c.buffer)); return; }
+        await pkLoadDecoder(); const audio = await pkDecode(chunks);
+        post({type:'audio', id, audio, sampleRate: 24000}, [audio.buffer]);
+      }, async () => { if(gen !== my) throw new Error('abgebrochen'); await servePrio(); });
+      return;
+    }
+    await loadVoice(job.voice);
+    if(job.voice === 'pocket' && job.mode === 'latents'){
+      const chunks = await pkLatents(job);
+      post({type:'latents', id: job.id, chunks}, chunks.map(c => c.buffer));
+      return;
+    }
+    const audio = await synth(job);
+    post({type:'audio', id: job.id, audio, sampleRate: job.voice === 'pocket' ? 24000 : meta.sample_rate}, [audio.buffer]);
+  }catch(e){
+    if(job.type === 'synthMany') for(const it of job.items) post({type:'error', id: it.id, message: String(e && e.message || e)});
+    else post({type:'error', id: job.id, message: String(e && e.message || e)});
+  }
+}
+/* reading aloud may not wait behind a long book job: it is served between two batches */
+async function servePrio(){
+  for(;;){ const k = queue.findIndex(j => j.prio); if(k < 0) return; await runJob(queue.splice(k, 1)[0]); }
+}
 async function pump(){
   if(busy) return;
   busy = true;
   while(queue.length){
-    let k = queue.findIndex(j => j.prio);   // reading aloud goes before the book preparation
-    const job = queue.splice(k < 0 ? 0 : k, 1)[0];
-    try{
-      if(job.type === 'encode'){
-        const data = encodeMp3(job);
-        post({type:'mp3', id: job.id, data: data.buffer}, [data.buffer]);
-        continue;
-      }
-      if(job.type === 'decode'){   // second worker: latents -> audio, in parallel to the first one
-        await pkLoadDecoder();
-        const audio = await pkDecode(job.chunks);
-        post({type:'audio', id: job.id, audio, sampleRate: 24000}, [audio.buffer]);
-        continue;
-      }
-      await loadVoice(job.voice);
-      if(job.voice === 'pocket' && job.mode === 'latents'){
-        const chunks = await pkLatents(job);
-        post({type:'latents', id: job.id, chunks}, chunks.map(c => c.buffer));
-        continue;
-      }
-      const audio = await synth(job);
-      post({type:'audio', id: job.id, audio, sampleRate: job.voice === 'pocket' ? 24000 : meta.sample_rate}, [audio.buffer]);
-    }catch(e){
-      post({type:'error', id: job.id, message: String(e && e.message || e)});
-    }
+    const k = queue.findIndex(j => j.prio);   // reading aloud goes before the book preparation
+    await runJob(queue.splice(k < 0 ? 0 : k, 1)[0]);
   }
   busy = false;
 }
@@ -192,9 +212,10 @@ self.onmessage = async e => {
     try{ loadingVoice = m.voice; await loadVoice(m.voice); post({type:'ready', voice: m.voice}); }
     catch(err){ post({type:'loadError', voice: m.voice, message: String(err && err.message || err)}); }
     finally{ loadingVoice = null; }
-  } else if(m.type === 'synth' || m.type === 'decode' || m.type === 'encode'){
+  } else if(m.type === 'synth' || m.type === 'decode' || m.type === 'encode' || m.type === 'synthMany'){
     queue.push(m); pump();
   } else if(m.type === 'reset'){
+    if(m.all) gen++;
     queue = m.all ? [] : queue.filter(j => !j.prio);
   } else if(m.type === 'isCached'){
     const ok = m.voice === 'pocket' ? await pkIsCached() : (await cacheHas('voice-' + m.voice)) && (await cacheHas('cfg-' + m.voice)) && (await cacheHas('ppdata'));

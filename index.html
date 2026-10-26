@@ -325,7 +325,7 @@ textarea{min-height:130px;resize:vertical;font-family:var(--f-read)}
       <button class="chip" type="button" data-expr="1.35" aria-pressed="false">Lebhaft</button>
     </div>
     <p class="sub" style="margin:14px 0 0;font-size:12px">Neue Stimmen: Pocket TTS von Kyutai (CC BY 4.0), für das Gerät umgewandelt. Hörbuch-Stimme: Piper.</p>
-    <div class="appver">App-Stand: <span id="appVer">26.10.2026, 17:53</span></div>
+    <div class="appver">App-Stand: <span id="appVer">26.10.2026, 19:45</span></div>
   </div>
 </div>
 
@@ -510,7 +510,7 @@ function voiceLabel(){
 function updateVoiceLabel(){ $('#voiceName').textContent = voiceLabel(); renderMini(); try{ prepUI(); }catch(e){} }
 
 /* ---------- Neural engine (worker) ---------- */
-const WORKER_URL = 'tts-worker-839619cc.js';
+const WORKER_URL = 'tts-worker-b17c163e.js';
 const NV = { worker:null, ready:null, loading:null, waiters:[], reqs:new Map(), nextId:1, cache:new Map(), keyBase:'', ctx:null, src:null, cached:{}, prog:{} };
 function nWorker(){
   if(NV.worker) return NV.worker;
@@ -539,7 +539,13 @@ function onWorkerMsg(e){
   const m = e.data;
   if(m.type === 'latents'){
     if(!NV.reqs.has(m.id)) return;
-    if(NV.dec && NV.decReady) NV.dec.postMessage({ type: 'decode', id: m.id, chunks: m.chunks, prio: !!NV.reqs.get(m.id).live }, m.chunks.map(c => c.buffer));
+    if(NV.dec && NV.decReady){
+      const live = !!NV.reqs.get(m.id).live;
+      NV.decN = (NV.decN || 0) + 1;
+      const pool = NV.dec2 && NV.dec2Ready ? [NV.dec, NV.dec2] : [NV.dec];
+      const w = live ? NV.dec : NV.decN % 4 === 0 ? NV.worker : pool[NV.decN % pool.length];   // the first worker has spare time while preparing
+      w.postMessage({ type: 'decode', id: m.id, chunks: m.chunks, prio: live }, m.chunks.map(c => c.buffer));
+    }
     else { const r = NV.reqs.get(m.id); NV.reqs.delete(m.id); r.rej(new Error('Decoder nicht bereit')); }
   } else if(m.type === 'progress'){
     const model = NV.loading;
@@ -869,10 +875,29 @@ async function storedChunk(i){
 /* preparing uses the same two workers as playback, with lower priority: reading aloud always goes first */
 function nCall(w, msg, transfer){ return new Promise((res, rej) => { const id = NV.nextId++; NV.reqs.set(id, { res, rej, live: false }); w.postMessage({ ...msg, id }, transfer || []); }); }
 const prepSynth = (v, text, ex) => nCall(nWorker(), { type: 'synth', voice: v.model, speaker: v.speaker || null, text, rate: 1, expr: ex, mode: v.model === 'pocket' && NV.dec && NV.decReady ? 'latents' : undefined, prio: false });
+/* phones with more cores get a third worker for turning latents into audio while a book is prepared */
+function prepExtraDecoder(on){
+  if(on){
+    if(NV.dec2 || !(navigator.hardwareConcurrency >= 4)) return;
+    try{
+      const w = new Worker(WORKER_URL); NV.dec2 = w; NV.dec2Ready = false;
+      w.onmessage = e => { const m = e.data; if(m.type === 'ready') NV.dec2Ready = true; else if(m.type === 'audio' || m.type === 'error' || m.type === 'mp3') onWorkerMsg(e); };
+      w.onerror = () => { NV.dec2Ready = false; };
+      w.postMessage({ type: 'load', voice: 'pocket-dec' });
+    }catch(e){ NV.dec2 = null; }
+  } else if(NV.dec2){ const w = NV.dec2; NV.dec2 = null; NV.dec2Ready = false; try{ w.terminate(); }catch(e){} }
+}
+/* the new voices compute a whole block in one job, 4 sentences side by side */
+function prepSynthMany(v, list, ex){
+  const items = list.map(x => ({ id: NV.nextId++, text: x.text }));
+  const ps = items.map(it => new Promise((res, rej) => NV.reqs.set(it.id, { res, rej, live: false })));
+  nWorker().postMessage({ type: 'synthMany', items, speaker: v.speaker || null, expr: ex, batch: 4, mode: NV.dec && NV.decReady ? 'latents' : 'audio', prio: false });
+  return ps;
+}
 const prepEncode = (f32, sr) => nCall(NV.dec && NV.decReady ? NV.dec : nWorker(), { type: 'encode', pcm: f32, sr, kbps: MP3_KBPS, prio: false }, [f32.buffer]);
 
 /* the preparation job of a book: { voice, expr, on, done } kept per book */
-const PREP = { running:false, err:'', wall:0, audio:0, keep:null, cur:-1, del:false };
+const PREP = { running:false, err:'', t0:0, wall:0, audio:0, keep:null, cur:-1, del:false };
 const prepJobs = () => store.get('prep', {});
 function prepJob(){ const b = bookId(); return b ? prepJobs()[b] || null : null; }
 function setPrepJob(j, book){ const all = prepJobs(), b = book || bookId(); if(!b) return; if(j) all[b] = j; else delete all[b]; store.set('prep', all); }
@@ -882,8 +907,10 @@ function prepStats(){
   let doneCh = 0; if(h) for(const b of h.keys()) doneCh += blocks[b] ? blocks[b].chars : 0;
   const total = PB.chars || 1, cps = (cpsStats[v.key] && cpsStats[v.key].n >= 5) ? Math.min(22, Math.max(7, cpsStats[v.key].c / cpsStats[v.key].t)) : CPS;
   const listenSec = total / cps, restAudio = (total - doneCh) / cps;
-  const speed = PREP.wall > 60 && PREP.audio > 0 ? PREP.audio / PREP.wall : 1.6;   // audio seconds made per second; first guess until measured
-  return { v, pct: Math.min(100, Math.floor(doneCh / total * 100)), full: !!h && h.size === blocks.length, known: !!h, listenSec, mb: listenSec * MP3_KBPS / 8 / 1000, etaSec: restAudio / speed, measured: PREP.wall > 60 };
+  const measured = PREP.audio > 0 && PREP.t0 > 0;
+  const speed = measured ? PREP.audio / Math.max(1, (performance.now() - PREP.t0) / 1000) : 2;   // seconds of speech made per second; first guess until measured
+  const exact = Math.min(100, doneCh / total * 100);
+  return { v, pct: exact, pctTxt: exact >= 10 || exact === 0 ? String(Math.floor(exact)) : exact.toFixed(1).replace('.', ','), full: !!h && h.size === blocks.length, known: !!h, listenSec, mb: listenSec * MP3_KBPS / 8 / 1000, etaSec: restAudio / speed, measured, speed };
 }
 function nextPrepBlock(h){
   const blocks = segBlocks(), n = blocks.length; if(!n) return -1;
@@ -903,11 +930,12 @@ async function prepRun(){
   const v = VBY[job.voice]; if(!v){ setPrepJob(null); prepUI(); return; }
   const docRef = doc.sentences, book = bookId();
   const active = () => doc.sentences === docRef && bookId() === book && (prepJob() || {}).on && (prepJob() || {}).voice === v.key;
-  PREP.running = true; PREP.err = ''; PREP.wall = 0; PREP.audio = 0; prepUI();
+  PREP.running = true; PREP.err = ''; PREP.wall = 0; PREP.audio = 0; PREP.t0 = 0; prepUI();
   if(!playing) keepAwake(true);
   try{
     const ln = curNeural();
     if(!playing || (ln && ln.model === v.model)) await loadModel(v.model);   // otherwise the worker loads it next to the playing voice
+    if(v.model === 'pocket') prepExtraDecoder(true);
     const h = await ensureHave(v.key); if(!h) throw new Error('Der Speicher auf dem Gerät ist nicht verfügbar.');
     let pending = null;   // the next block is already computing while the previous one is packed and stored
     for(;;){
@@ -929,7 +957,7 @@ async function prepRun(){
     }
   }catch(e){ PREP.err = e.message || String(e); }
   finally{
-    PREP.running = false; PREP.cur = -1;
+    PREP.running = false; PREP.cur = -1; prepExtraDecoder(false);
     if(!playing){ keepAwake(false); prepKeep(false); }
     prepUI(); if(!$('#sheetChapters').hidden) renderChapters();
   }
@@ -937,11 +965,17 @@ async function prepRun(){
 /* compute every sentence of a block (sentences playback already asked for are shared) */
 async function prepCompute(b, v, ex){
   const B = segBlocks()[b], t0 = performance.now(), n = curNeural();
+  if(!PREP.t0) PREP.t0 = t0;
   const sameLive = n && n.key === v.key && ex === expr;
-  const ps = [];
+  const ps = new Array(B.end - B.start), todo = [];
   for(let i = B.start; i < B.end; i++){
     const key = keyBase() + '|' + i, t = doc.sentences[i].t;
-    ps.push(sameLive && NV.cache.has(key) ? NV.cache.get(key).catch(() => prepSynth(v, t, ex)) : prepSynth(v, t, ex));
+    if(sameLive && NV.cache.has(key)) ps[i - B.start] = NV.cache.get(key).catch(() => prepSynth(v, t, ex));
+    else todo.push({ k: i - B.start, text: t });
+  }
+  if(todo.length){
+    if(v.model === 'pocket'){ const many = prepSynthMany(v, todo, ex); todo.forEach((x, q) => { ps[x.k] = many[q].catch(e => e.message === 'abgebrochen' ? Promise.reject(e) : prepSynth(v, x.text, ex)); }); }
+    else todo.forEach(x => { ps[x.k] = prepSynth(v, x.text, ex); });
   }
   const res = await Promise.all(ps);
   return { b, B, res, t0 };
@@ -993,7 +1027,7 @@ function prepMeta(){
   try{
     const ms = navigator.mediaSession; if(!ms || playing || typeof MediaMetadata === 'undefined' || !PREP.running) return;
     const s = prepStats();
-    ms.metadata = new MediaMetadata({ title: `Wird vorbereitet · ${s.pct} %`, artist: doc.name || 'PDF-Vorleser', album: 'PDF-Vorleser' });
+    ms.metadata = new MediaMetadata({ title: `Wird vorbereitet · ${s.pctTxt} %`, artist: doc.name || 'PDF-Vorleser', album: 'PDF-Vorleser' });
   }catch(e){}
 }
 let prepUIt = 0;
@@ -1009,10 +1043,10 @@ function prepUI(){
   const s = prepStats(), other = n && v.key !== n.key ? ` (${v.name})` : '';
   let txt, cls = '', sub = '';
   if(s.full){ txt = `✓ Ganzes Buch bereit${other} · ohne Wartezeit`; cls = 'ok'; sub = 'Spielt die fertige Aufnahme ab, auch offline.'; }
-  else if(PREP.running && !(job && job.on)){ txt = `Wird angehalten … ${s.pct} %`; cls = 'pause'; }
-  else if(PREP.running){ txt = NV.loading && !playing ? 'Stimme wird geladen …' : `Wird vorbereitet${other} · ${s.pct} % · noch ca. ${durTxt(s.etaSec)}`; cls = 'run'; sub = 'Läuft im Hintergrund, du kannst nebenbei hören.'; }
+  else if(PREP.running && !(job && job.on)){ txt = `Wird angehalten … ${s.pctTxt} %`; cls = 'pause'; }
+  else if(PREP.running){ txt = NV.loading && !playing ? 'Stimme wird geladen …' : `Wird vorbereitet${other} · ${s.pctTxt} % · noch ca. ${durTxt(s.etaSec)}`; cls = 'run'; sub = 'Läuft im Hintergrund, du kannst nebenbei hören.'; }
   else if(job && job.on){ txt = `Vorbereitung startet …`; cls = 'run'; }
-  else if(s.pct > 0){ txt = `▶ Vorbereitung fortsetzen${other} · ${s.pct} %`; cls = 'pause'; sub = 'Tippe, um weiterzumachen.'; }
+  else if(s.pct > 0){ txt = `▶ Vorbereitung fortsetzen${other} · ${s.pctTxt} %`; cls = 'pause'; sub = 'Tippe, um weiterzumachen.'; }
   else { txt = '⤓ Ganzes Buch vorbereiten'; sub = `Einmal berechnen (ca. ${durTxt(s.etaSec)}), danach ohne Wartezeit hören.`; }
   btn.textContent = txt; btn.className = 'prep-btn ' + cls;
   const vc = $('#voicePrep'); if(vc){ vc.hidden = false; $('#voicePrepT').textContent = txt; $('#voicePrepS').textContent = sub || 'Antippen für Details.'; }
@@ -1028,7 +1062,8 @@ function renderPrepSheet(){
     : `Die Stimme ${s.v.name} liest das ganze Buch einmal vorab und speichert es auf deinem Gerät. Danach spielt der Vorleser nur noch die fertige Aufnahme ab: keine Wartezeit mehr, auch offline, und Springen und Tempo wirken sofort.`;
   $('#prepBarI').style.width = s.pct + '%';
   const facts = [`Hörzeit: ca. ${durTxt(s.listenSec)}`, `Speicher: ca. ${Math.max(1, Math.round(s.mb))} MB`];
-  if(!s.full) facts.push(`Fertig: ${s.pct} %` + (s.pct < 100 ? ` · noch ca. ${durTxt(s.etaSec)}${s.measured ? '' : ' (wird nach ein paar Minuten genauer)'}` : ''));
+  if(!s.full) facts.push(`Fertig: ${s.pctTxt} %` + (s.pct < 100 ? ` · noch ca. ${durTxt(s.etaSec)}${s.measured ? '' : ' (Schätzung, wird gleich gemessen)'}` : ''));
+  if(PREP.running && s.measured) facts.push(`Dein Gerät rechnet ${s.speed.toFixed(1).replace('.', ',')}-mal so schnell, wie gesprochen wird.`);
   if(PREP.err) facts.push('Unterbrochen: ' + PREP.err);
   $('#prepFacts').innerHTML = facts.map(f => `<div>${esc(f)}</div>`).join('');
   const go = $('#prepGo');
