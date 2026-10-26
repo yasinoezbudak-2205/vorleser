@@ -1,10 +1,10 @@
 /* PDF-Vorleser – Offline-Speicher für die App-Dateien */
-const VERSION = '15ab12748c';
+const VERSION = 'cc7a3ccaa7';
 const SHELL = 'vorleser-shell-' + VERSION;
 const RUNTIME = 'vorleser-runtime-v1';
-const FILES = ["./", "index.html", "manifest.webmanifest", "icon-180.png", "icon-192.png", "icon-512.png", "tts-worker.js", "pocket-engine.js", "lib/pdf.min.js", "lib/pdf.worker.min.js", "engine/ort.wasm.min.js", "engine/piper_phonemize.js", "engine/piper_phonemize.wasm", "engine/ort-wasm-simd.wasm"];
+const FILES = ["./", "index.html", "manifest.webmanifest", "icon-180.png", "icon-192.png", "icon-512.png", "tts-worker-ace668ab.js", "pocket-engine-ace668ab.js", "lib/pdf.min.js", "lib/pdf.worker.min.js", "engine/ort.wasm.min.js", "engine/piper_phonemize.js", "engine/piper_phonemize.wasm", "engine/ort-wasm-simd.wasm"];
 self.addEventListener('install', e => {
-  e.waitUntil(caches.open(SHELL).then(c => c.addAll(FILES)).then(() => self.skipWaiting()));
+  e.waitUntil(caches.open(SHELL).then(c => c.addAll(FILES.map(f => new Request(f, { cache: 'reload' })))).then(() => self.skipWaiting()));
 });
 self.addEventListener('activate', e => {
   e.waitUntil(caches.keys().then(keys => Promise.all(keys.filter(k => k.startsWith('vorleser-shell-') && k !== SHELL).map(k => caches.delete(k)))).then(() => self.clients.claim()));
@@ -15,7 +15,7 @@ self.addEventListener('fetch', e => {
   const url = new URL(req.url);
   if(url.hostname.endsWith('huggingface.co') || url.hostname.endsWith('hf.co')) return;   // voices are stored by the voice worker itself
   if(req.mode === 'navigate'){
-    e.respondWith(fetch(req).then(r => { const c = r.clone(); caches.open(SHELL).then(x => x.put('index.html', c)); return r; })
+    e.respondWith(fetch(req, { cache: 'no-cache' }).then(r => { const c = r.clone(); caches.open(SHELL).then(x => x.put('index.html', c)); return r; })
       .catch(() => caches.match('index.html', { ignoreSearch: true })));
     return;
   }
@@ -26,7 +26,7 @@ self.addEventListener('fetch', e => {
   const store = r => { if(r.ok || r.type === 'opaque'){ const c = r.clone(); caches.open(sameOrigin ? SHELL : RUNTIME).then(x => x.put(req, c)); } return r; };
   if(sameOrigin && /\.(js|json|html|webmanifest)$/.test(url.pathname)){
     // program files: fresh from the network when online, so updates arrive at once; offline from the store
-    e.respondWith(fetch(req).then(store).catch(() => caches.match(req, { ignoreSearch: true })));
+    e.respondWith(fetch(req, { cache: 'no-cache' }).then(store).catch(() => caches.match(req, { ignoreSearch: true })));
     return;
   }
   e.respondWith(caches.match(req, { ignoreSearch: true }).then(hit => hit || fetch(req).then(store)));
