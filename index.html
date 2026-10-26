@@ -453,7 +453,7 @@ function migrateVoice(v){
 const engine = () => sel && sel.startsWith('n:') ? 'neural' : 'device';
 const curNeural = () => engine() === 'neural' ? VBY[sel.slice(2)] || VBY['pk-anna'] : null;
 /* the new voices are computed at normal speed and sped up while playing (pitch stays the same) */
-const rf = () => { const n = curNeural(); return n && n.model === 'pocket' ? rate : 1; };
+const rf = () => curNeural() ? rate : 1;   // neural voices: tempo is applied while playing, so it changes instantly
 const curDevice = () => { if(engine() !== 'device') return null; const u = sel.slice(2); const x = deviceVoices.find(x => x.v.voiceURI === u); return x ? x.v : null; };
 
 const NOVELTY = /^(Albert|Bad News|Bahh|Bells|Boing|Bubbles|Cellos|Deranged|Good News|Hysterical|Jester|Junior|Organ|Pipe Organ|Superstar|Trinoids|Whisper|Wobble|Zarvox|Fred|Ralph|Kathy|Princess)\b/i;
@@ -569,14 +569,14 @@ function ensureCtx(){
     const b = NV.ctx.createBuffer(1, 1, 22050); const s = NV.ctx.createBufferSource(); s.buffer = b; s.connect(NV.ctx.destination); s.start();
   }catch(e){}
 }
-const keyBase = () => { const n = curNeural(); return (n ? n.key : '') + '|' + rate + '|' + expr; };
+const keyBase = () => { const n = curNeural(); return (n ? n.key : '') + '|' + expr; };
 function nReset(){ NV.cache.clear(); NV.reqs.clear(); NV.keyBase = keyBase(); if(NV.worker) NV.worker.postMessage({type:'reset'}); if(NV.dec) NV.dec.postMessage({type:'reset'}); }
 function synthReq(text, v){
   const id = NV.nextId++;
   return new Promise((res, rej) => {
     NV.reqs.set(id, {res, rej});
     const split = v.model === 'pocket' && NV.dec && NV.decReady;
-    nWorker().postMessage({type:'synth', id, voice: v.model, speaker: v.speaker || null, text, rate, expr, mode: split ? 'latents' : undefined});
+    nWorker().postMessage({type:'synth', id, voice: v.model, speaker: v.speaker || null, text, rate: 1, expr, mode: split ? 'latents' : undefined});
   });
 }
 function getAudio(i){
@@ -585,8 +585,7 @@ function getAudio(i){
   const len = doc.sentences[i].t.length;
   const p = synthReq(doc.sentences[i].t, curNeural());
   const pad = doc.paraEnd.has(i) ? 0.5 : 0.18, arr = durArr();
-  const f = rf();
-  p.then(r => { const sec = (r.audio.length / r.sampleRate + pad) / f; cpsLearn(len, sec); arr[i] = sec; }, () => NV.cache.delete(key));
+  p.then(r => { const sec = r.audio.length / r.sampleRate + pad; cpsLearn(len, sec / rf()); arr[i] = sec; }, () => NV.cache.delete(key));
   NV.cache.set(key, p);
   return p;
 }
@@ -599,7 +598,8 @@ function durArr(){
 function secBetween(a, b){
   const arr = engine() === 'neural' ? durArr() : null, cps = cpsNow();
   let s = 0;
-  for(let k = a; k < b; k++) s += (arr && arr[k]) || doc.sentences[k].t.length / cps;
+  const f = rf();
+  for(let k = a; k < b; k++) s += (arr && arr[k]) ? arr[k] / f : doc.sentences[k].t.length / cps;
   return s;
 }
 const sentDur = i => secBetween(i, i + 1);
@@ -683,7 +683,7 @@ function playChunk(ch, onend){
     a.onerror = fallback;
     a.src = AE.url; a.volume = 1;
     try{ a.preservesPitch = true; a.webkitPreservesPitch = true; }catch(e){}
-    a.defaultPlaybackRate = a.playbackRate = ch.rate || 1;
+    a.defaultPlaybackRate = a.playbackRate = ch.start < 0 ? 1 : rf();
     const pr = a.play(); if(pr && pr.catch) pr.catch(fallback);
     return;
   }
@@ -693,7 +693,7 @@ function playChunkWA(ch, onend){
   const ctx = NV.ctx;
   const buf = ctx.createBuffer(1, Math.max(1, ch.f32.length), ch.sr); buf.getChannelData(0).set(ch.f32);
   const src = ctx.createBufferSource(); src.buffer = buf; src.connect(ctx.destination);
-  const r = ch.rate || 1; if(r !== 1) src.playbackRate.value = r;
+  const r = ch.start < 0 ? 1 : rf(); if(r !== 1) src.playbackRate.value = r;
   const t0 = ctx.currentTime;
   const mine = { stop(){ src.onended = null; try{ src.stop(); }catch(e){} }, clock: () => (ctx.currentTime - t0) * r };
   src.onended = () => { if(NV.src === mine){ NV.src = null; onend && onend(); } };
@@ -1336,7 +1336,7 @@ function liveWithin(){
   if(!playing || !doc.sentences[idx]) return 0;
   if(engine() === 'neural'){
     const ch = NV.chunk, k = ch ? idx - ch.start : -1;
-    if(NV.src && ch && ch.start >= 0 && k >= 0 && k < ch.offs.length) return Math.max(0, Math.min(sentDur(idx) * 0.99, (chunkClock() - ch.offs[k]) / (ch.rate || 1)));
+    if(NV.src && ch && ch.start >= 0 && k >= 0 && k < ch.offs.length) return Math.max(0, Math.min(sentDur(idx) * 0.99, (chunkClock() - ch.offs[k]) / rf()));
     return 0;
   }
   return DEV.t0 ? Math.max(0, Math.min(sentDur(idx) * 0.98, (performance.now() - DEV.t0) / 1000)) : 0;
@@ -1418,8 +1418,15 @@ const rateTxt = r => (Math.round(r*100)/100).toString().replace('.',',') + '×';
 function setRate(r){
   rate = r; store.set('rate', rate);
   $('#speedLbl').textContent = rateTxt(rate);
-  renderSpeedChips(); updateProgress();
-  if(playing) speakFrom(idx);
+  renderSpeedChips();
+  if(playing){
+    if(engine() === 'neural' && AE.ok){
+      // like a music app: the running audio just plays faster or slower, nothing is computed again
+      if(NV.src && NV.chunk && NV.chunk.start >= 0){ const a = audioEl(); a.defaultPlaybackRate = a.playbackRate = rf(); }
+      fillAhead(NV.chunk && NV.chunk.end > idx ? NV.chunk.end : idx);
+    } else speakFrom(idx);
+  }
+  updateProgress(); updatePositionState(true);
 }
 function renderSpeedChips(){
   $('#speedChips').innerHTML = SPEEDS.map(s => `<button class="chip" type="button" data-speed="${s}" aria-pressed="${Math.abs(s - rate) < 0.001}">${rateTxt(s)}</button>`).join('');
