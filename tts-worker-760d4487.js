@@ -9,7 +9,7 @@ const MODELS = {
   hoerbuch: HF + 'domoskanonos/piper-tts-models-de/resolve/main/de_DE-audio_book-medium.onnx'
 };
 
-importScripts('pocket-engine-fbf2275a.js');   // new voices (Kyutai Pocket TTS)
+importScripts('pocket-engine-760d4487.js');   // new voices (Kyutai Pocket TTS)
 
 let engineReady = null, phonemizer = null, phonOut = '';
 let session = null, meta = null, voiceId = null, loadingVoice = null;
@@ -77,6 +77,7 @@ function initEngine(){
 async function loadVoice(id){
   if(id === 'pocket'){ await pkLoad(false); return; }
   if(id === 'pocket-dec'){ await pkLoadDecoder(); return; }
+  if(id === 'pocket-gpu'){ await pkLoadGpu(); return; }   // graphics chip worker
   if(voiceId === id && session) return;
   await initEngine();
   const url = MODELS[id]; if(!url) throw new Error('Unbekannte Stimme');
@@ -167,8 +168,8 @@ async function runJob(job){
       post({type:'audio', id: job.id, audio, sampleRate: 24000}, [audio.buffer]);
       return;
     }
-    if(job.type === 'synthMany'){   // book preparation: many sentences, computed 4 at a time
-      await loadVoice('pocket');
+    if(job.type === 'synthMany'){   // book preparation: many sentences, computed 4 at a time (on the GPU: more)
+      if(!self.PK_GPU) await loadVoice('pocket');
       const my = gen;
       const jobs = job.items.map(it => ({ text: it.text, speaker: job.speaker, expr: job.expr }));
       await pkLatentsMany(jobs, job.batch || 4, async (j, chunks) => {

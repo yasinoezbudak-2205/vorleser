@@ -101,20 +101,124 @@ function pkLoad(withDecoder){
     PK.step = await self.ort.InferenceSession.create(stepB, opt);
     PK.head = await self.ort.InferenceSession.create(pkRebuild(headB, m.flow_head), opt);
     if(withDecoder) PK.mimi = await self.ort.InferenceSession.create(pkRebuild(mimiB, m.mimi_decoder), opt);
-    PK.lut = new Uint16Array(lutB.buffer.slice(lutB.byteOffset, lutB.byteOffset + lutB.byteLength));
-    const tok = await (await fetch(PK_BASE + 'tokenizer.json')).json();
-    PK.vocab = new Map(); let minScore = 0;
-    tok.vocab.forEach(([piece, score], id) => {
-      if(id < 4) return;                       // <unk>, <s>, </s>, <pad>
-      PK.vocab.set(piece, [id, score]);
-      PK.maxLen = Math.max(PK.maxLen, Array.from(piece).length);
-      if(score < minScore) minScore = score;
-    });
-    PK.unkScore = minScore - 10;
-    PK.meta = m;
+    await pkInitText(m, lutB);
   })();
   PK.ready.catch(() => { PK.ready = null; });
   return PK.ready;
+}
+async function pkInitText(m, lutB){
+  PK.lut = new Uint16Array(lutB.buffer.slice(lutB.byteOffset, lutB.byteOffset + lutB.byteLength));
+  const tok = await (await fetch(PK_BASE + 'tokenizer.json')).json();
+  PK.vocab = new Map(); let minScore = 0;
+  tok.vocab.forEach(([piece, score], id) => {
+    if(id < 4) return;                       // <unk>, <s>, </s>, <pad>
+    PK.vocab.set(piece, [id, score]);
+    PK.maxLen = Math.max(PK.maxLen, Array.from(piece).length);
+    if(score < minScore) minScore = score;
+  });
+  PK.unkScore = minScore - 10;
+  PK.meta = m;
+}
+
+/* ---- graphics chip (WebGPU): one worker runs voice model + decoder on the GPU ----
+   Newer ONNX Runtime (1.29, WebGPU build) and an 8-bit model that also contains the flow head.
+   The voice memory (KV) stays on the GPU from frame to frame; only latents and EOS come back. */
+const PKG = { ready: null, step: null, mimi: null, kvH: new Map() };
+function pkLoadGpu(){
+  if(PKG.ready) return PKG.ready;
+  PKG.ready = (async () => {
+    if(!self.navigator || !self.navigator.gpu) throw new Error('WebGPU fehlt');
+    const adapter = await self.navigator.gpu.requestAdapter();
+    if(!adapter) throw new Error('Kein Grafikchip verfügbar');
+    self.PK_GPU = true;
+    const m = await (await fetch(PK_BASE + 'meta.json')).json(), g = m.gpu;
+    if(!g) throw new Error('Keine Grafikchip-Dateien');
+    const [ortB, stepB, mimiB, lutB] = await pkFetchAll([
+      { key: 'pk-gort-' + g.ort.ver, size: g.ort.size, parts: g.ort.parts },
+      { key: 'pk-gstep-' + g.step.ver, size: g.step.graphSize + g.step.packedSize, parts: g.step.parts },
+      { key: pkKey('mimi', m.mimi_decoder, m), size: m.mimi_decoder.graphSize + m.mimi_decoder.packedSize, parts: m.mimi_decoder.parts },
+      { key: pkKey('lut', m.lut, m), size: m.lut.size, parts: m.lut.parts }
+    ], 'Grafikchip');
+    post({type:'status', text:'Grafikchip wird eingerichtet …'});
+    importScripts(new URL('engine/' + g.ort.js, self.location.href).href);
+    self.ort.env.wasm.numThreads = 1; self.ort.env.wasm.proxy = false;
+    self.ort.env.wasm.wasmPaths = new URL('engine/', self.location.href).href;
+    self.ort.env.wasm.wasmBinary = ortB.buffer.slice(ortB.byteOffset, ortB.byteOffset + ortB.byteLength);
+    const outs = {}; for(let i = 0; i < m.layers; i++){ outs['present_k_' + i] = 'gpu-buffer'; outs['present_v_' + i] = 'gpu-buffer'; }
+    PKG.step = await self.ort.InferenceSession.create(pkRebuild(stepB, g.step), { executionProviders: ['webgpu'], graphOptimizationLevel: 'all', preferredOutputLocation: outs });
+    PKG.mimi = await self.ort.InferenceSession.create(pkRebuild(mimiB, m.mimi_decoder), { executionProviders: ['webgpu'], graphOptimizationLevel: 'all' });
+    PK.mimi = PKG.mimi;
+    await pkInitText(m, lutB);
+    PK.ready = Promise.resolve();
+  })();
+  PKG.ready.catch(() => { PKG.ready = null; });
+  return PKG.ready;
+}
+/* voice memory re-ordered per head ([H][V][D]) once, for the GPU model's [B,H,P,D] layout */
+function pkVoiceH(voice){
+  if(PKG.kvH.has(voice)) return PKG.kvH.get(voice);
+  const m = PK.meta, H = m.heads, Dd = m.head_dim, HD = H * Dd, V = voice.len;
+  const out = voice.kv.map(src => { const b = new Float32Array(H * V * Dd); for(let p = 0; p < V; p++) for(let h = 0; h < H; h++) b.set(src.subarray(p * HD + h * Dd, p * HD + h * Dd + Dd), (h * V + p) * Dd); return b; });
+  PKG.kvH.set(voice, out);
+  return out;
+}
+async function pkSynthBatchGpu(preps, voice, temp, between){
+  const m = PK.meta, L = m.layers, H = m.heads, Dd = m.head_dim, T = self.ort.Tensor, B = preps.length, LD = m.ldim;
+  const idss = preps.map(p => pkTokenize(p.text));
+  const maxFr = idss.map(ids => Math.ceil((ids.length / 3 + 2) * 12.5));
+  const Tt = Math.max(...idss.map(x => x.length)), FR = Math.max(...maxFr), V = voice.len;
+  const cap = V + Tt + FR + 4;
+  const kvH = pkVoiceH(voice);
+  let past = kvH.map(src => { const b = new Float32Array(B * src.length); for(let i = 0; i < B; i++) b.set(src, i * src.length); return new T('float32', b, [B, H, V, Dd]); });
+  const valid = preps.map(() => { const v = new Uint8Array(cap); v.fill(1, 0, V); return v; });
+  const pos = new Array(B).fill(V);
+  let P = V;
+  const names = []; for(let i = 0; i < L; i++) names.push('present_k_' + i, 'present_v_' + i);
+  const run = async (seq, seqLen, text, textLen, newValid, noise) => {
+    const Tn = seqLen + textLen, K = P + Tn, km = new Float32Array(B * K);
+    for(let b = 0; b < B; b++){
+      const o = b * K, v = valid[b];
+      for(let c = 0; c < P; c++) if(!v[c]) km[o + c] = -1e9;
+      for(let j = 0; j < Tn; j++) if(!newValid(b, j)) km[o + P + j] = -1e9;
+    }
+    const feeds = { sequence: new T('float32', seq, [B, seqLen, LD]), text_embeddings: new T('float32', text, [B, textLen, 1024]),
+      offset: new T('int64', BigInt64Array.from(pos.map(BigInt)), [B]), key_mask: new T('float32', km, [B, K]), noise: new T('float32', noise, [B, LD]) };
+    for(let i = 0; i < L; i++){ feeds['past_k_' + i] = past[2 * i]; feeds['past_v_' + i] = past[2 * i + 1]; }
+    const r = await PKG.step.run(feeds);
+    for(const t of past) if(t.location === 'gpu-buffer') t.dispose();
+    past = names.map(n => r[n]);
+    for(let b = 0; b < B; b++) for(let j = 0; j < Tn; j++) valid[b][P + j] = newValid(b, j) ? 1 : 0;
+    P += Tn;
+    return { lat: r.latent.data, eos: r.eos_logit.data };
+  };
+  try{
+    const emb = new Float32Array(B * Tt * 1024);
+    idss.forEach((ids, b) => ids.forEach((id, k) => pkHalfToFloat(PK.lut.subarray(id * 1024, (id + 1) * 1024), emb, (b * Tt + k) * 1024)));
+    await run(new Float32Array(0), 0, emb, Tt, (b, j) => j < idss[b].length, new Float32Array(B * LD));
+    idss.forEach((ids, b) => { pos[b] = V + ids.length; });
+    const lat = maxFr.map(n => new Float32Array(n * LD)), frames = new Array(B).fill(0), eos = new Array(B).fill(-1), done = new Array(B).fill(false);
+    let seq = new Float32Array(B * LD).fill(NaN), pend = null;
+    const sd = Math.sqrt(temp), noEmb = new Float32Array(0), yes = () => true;
+    for(let i = 0; i < FR; i++){
+      if(between && i % 6 === 5) await between();
+      const x = new Float32Array(B * LD); for(let k = 0; k < x.length; k++) x[k] = pkRandn() * sd;
+      const r = await run(seq, 1, noEmb, 0, yes, x);
+      // the model already returns the next latent; frame i's EOS decides whether it is kept
+      for(let b = 0; b < B; b++){
+        if(done[b]) continue;
+        if(i >= maxFr[b]){ done[b] = true; continue; }
+        if(r.eos[b] > m.eos_threshold && eos[b] < 0 && i >= m.min_frames_before_eos) eos[b] = i;
+        if(eos[b] >= 0 && i >= eos[b] + preps[b].afterEos){ done[b] = true; continue; }
+        lat[b].set(r.lat.subarray(b * LD, (b + 1) * LD), frames[b] * LD); frames[b]++;
+      }
+      if(done.every(Boolean)) break;
+      seq = new Float32Array(r.lat);
+      for(let b = 0; b < B; b++) pos[b]++;
+    }
+    return lat.map((l, b) => l.slice(0, frames[b] * LD));
+  } finally {
+    for(const t of past) if(t && t.location === 'gpu-buffer') t.dispose();
+  }
 }
 /* decoder only (used by the second worker that turns latents into audio in parallel) */
 let PK_DEC = null;
@@ -288,7 +392,8 @@ async function pkSynthBatch(preps, voice, temp, between){
   }
   return lat.map((l, b) => l.slice(0, frames[b] * LD));
 }
-async function pkSynthChunk(prep, voice, temp){ return (await pkSynthBatch([prep], voice, temp))[0]; }
+async function pkSynthChunk(prep, voice, temp){ return (await (self.PK_GPU ? pkSynthBatchGpu : pkSynthBatch)([prep], voice, temp))[0]; }
+const pkReady = () => self.PK_GPU ? pkLoadGpu() : pkLoad(false);
 /* latents -> audio, one decoder pass per piece; the decoder starts with a tiny click, so the first 5 ms fade in */
 async function pkDecode(latents){
   const T = self.ort.Tensor, ld = 32, parts = [];
@@ -307,7 +412,7 @@ async function pkDecode(latents){
   return pkJoin(parts);
 }
 async function pkLatents(job){
-  await pkLoad(false);
+  await pkReady();
   const voice = await pkVoice(job.speaker || 'anna');
   const temp = PK.meta.temp * Math.min(1.5, Math.max(0.5, job.expr || 1));
   const out = [];
@@ -315,7 +420,7 @@ async function pkLatents(job){
   return out;
 }
 async function pkLatentsMany(jobs, B, onJob, between){
-  await pkLoad(false);
+  await pkReady();
   const voice = await pkVoice(jobs[0].speaker || 'anna');
   const temp = PK.meta.temp * Math.min(1.5, Math.max(0.5, jobs[0].expr || 1));
   const items = [], out = jobs.map(() => []), left = jobs.map(() => 0);
@@ -325,7 +430,7 @@ async function pkLatentsMany(jobs, B, onJob, between){
   for(let g = 0; g < items.length; g += B){
     if(between) await between();
     const grp = items.slice(g, g + B);
-    const lats = await pkSynthBatch(grp.map(it => it.prep), voice, temp, between);
+    const lats = await (self.PK_GPU ? pkSynthBatchGpu : pkSynthBatch)(grp.map(it => it.prep), voice, temp, between);
     for(let q = 0; q < grp.length; q++){ const it = grp[q]; out[it.j][it.k] = lats[q]; if(--left[it.j] === 0) await onJob(it.j, out[it.j]); }
   }
 }

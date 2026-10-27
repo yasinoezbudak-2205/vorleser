@@ -325,7 +325,7 @@ textarea{min-height:130px;resize:vertical;font-family:var(--f-read)}
       <button class="chip" type="button" data-expr="1.35" aria-pressed="false">Lebhaft</button>
     </div>
     <p class="sub" style="margin:14px 0 0;font-size:12px">Neue Stimmen: Pocket TTS von Kyutai (CC BY 4.0), für das Gerät umgewandelt. Hörbuch-Stimme: Piper.</p>
-    <div class="appver">App-Stand: <span id="appVer">26.10.2026, 20:23</span></div>
+    <div class="appver">App-Stand: <span id="appVer">27.10.2026, 10:19</span></div>
   </div>
 </div>
 
@@ -510,7 +510,7 @@ function voiceLabel(){
 function updateVoiceLabel(){ $('#voiceName').textContent = voiceLabel(); renderMini(); try{ prepUI(); }catch(e){} }
 
 /* ---------- Neural engine (worker) ---------- */
-const WORKER_URL = 'tts-worker-fbf2275a.js';
+const WORKER_URL = 'tts-worker-760d4487.js';
 const NV = { worker:null, ready:null, loading:null, waiters:[], reqs:new Map(), nextId:1, cache:new Map(), keyBase:'', ctx:null, src:null, cached:{}, prog:{} };
 function nWorker(){
   if(NV.worker) return NV.worker;
@@ -894,7 +894,7 @@ function prepSynthMany(v, list, ex){
 const prepEncode = (f32, sr) => nCall(NV.dec && NV.decReady ? NV.dec : nWorker(), { type: 'encode', pcm: f32, sr, kbps: MP3_KBPS, prio: false }, [f32.buffer]);
 
 /* the preparation job of a book: { voice, expr, on, done } kept per book */
-const PREP = { running:false, err:'', t0:0, wall:0, audio:0, keep:null, cur:-1, del:false };
+const PREP = { running:false, err:'', t0:0, inprog:new Set(), lanes:{}, cpuOff:false, wall:0, audio:0, keep:null, cur:-1, del:false };
 const prepJobs = () => store.get('prep', {});
 function prepJob(){ const b = bookId(); return b ? prepJobs()[b] || null : null; }
 function setPrepJob(j, book){ const all = prepJobs(), b = book || bookId(); if(!b) return; if(j) all[b] = j; else delete all[b]; store.set('prep', all); }
@@ -927,7 +927,7 @@ function nextPrepBlock(h){
     while(start < doc.sentences.length - 1 && ch < lim){ ch += doc.sentences[start].t.length; start++; }
   }
   const from = PB.of && PB.of[start] || 0;
-  for(let k = 0; k < n; k++){ const b = (from + k) % n; if(!h.has(b) && b !== PREP.cur) return b; }
+  for(let k = 0; k < n; k++){ const b = (from + k) % n; if(!h.has(b) && !PREP.inprog.has(b)) return b; }
   return -1;
 }
 async function prepStart(){
@@ -936,13 +936,50 @@ async function prepStart(){
   prepKeep(true); prepRun();
 }
 function prepPause(){ const j = prepJob(); if(j){ j.on = false; setPrepJob(j); } prepKeep(false); prepUI(); }
+/* ---------- graphics chip (WebGPU) worker for the preparation ----------
+   Runs next to the processor workers: each takes the next free block, so their speeds add up.
+   Crash guard: if the app goes down twice while the GPU is being set up, the GPU is not used again. */
+const GP = { w:null, ready:null, reqs:new Map() };
+(() => { const t = store.get('gpuTry', 0), g = store.get('gpu', {}); if(t && !g.ok){ g.fails = (g.fails || 0) + 1; store.set('gpu', g); } store.set('gpuTry', 0); })();
+function gpuUsable(){ const g = store.get('gpu', {}); return !!(navigator.gpu) && !(g.fails >= 2 && !g.ok) && !g.off; }
+function gpuStart(){
+  if(GP.ready) return GP.ready;
+  GP.ready = new Promise((res, rej) => {
+    let w;
+    try{ w = new Worker(WORKER_URL); }catch(e){ rej(e); return; }
+    GP.w = w;
+    w.onmessage = e => {
+      const m = e.data;
+      if(m.type === 'ready' && m.voice === 'pocket-gpu'){ GP.loaded = true; PREP.gload = null; res(); }
+      else if(m.type === 'loadError' && m.voice === 'pocket-gpu'){ PREP.gload = null; rej(new Error(m.message)); }
+      else if(m.type === 'progress'){ if(GP.loaded) return; PREP.gload = m.total && !m.cached ? Math.round(m.loaded / m.total * 100) : null; prepUI(); }
+      else if(m.type === 'status'){ store.set('gpuTry', Date.now()); }
+      else if(m.type === 'audio' || m.type === 'error' || m.type === 'mp3'){ const q = GP.reqs.get(m.id); if(q){ GP.reqs.delete(m.id); m.type === 'error' ? q.rej(new Error(m.message || 'Grafikchip-Fehler')) : q.res(m); } }
+    };
+    w.onerror = () => { rej(new Error('Grafikchip-Worker abgestürzt')); gpuStop(); };
+    w.postMessage({ type: 'load', voice: 'pocket-gpu' });
+  });
+  GP.ready.catch(() => gpuStop());
+  return GP.ready;
+}
+function gpuStop(){
+  const all = [...GP.reqs.values()]; GP.reqs.clear(); all.forEach(q => q.rej(new Error('Grafikchip beendet')));
+  if(GP.w){ try{ GP.w.terminate(); }catch(e){} }
+  GP.w = null; GP.ready = null; GP.loaded = false; PREP.gload = null; store.set('gpuTry', 0);
+}
+function gpuSynthMany(v, list, ex){
+  const items = list.map(x => ({ id: NV.nextId++, text: x.text }));
+  const ps = items.map(it => new Promise((res, rej) => GP.reqs.set(it.id, { res, rej })));
+  GP.w.postMessage({ type: 'synthMany', items, speaker: v.speaker || null, expr: ex, batch: 8, mode: 'audio', prio: false });
+  return ps;
+}
 async function prepRun(){
   if(PREP.running) return;
   const job = prepJob(); if(!job || !job.on || !neuralOK){ prepUI(); return; }
   const v = VBY[job.voice]; if(!v){ setPrepJob(null); prepUI(); return; }
   const docRef = doc.sentences, book = bookId();
   const active = () => doc.sentences === docRef && bookId() === book && (prepJob() || {}).on && (prepJob() || {}).voice === v.key;
-  PREP.running = true; PREP.err = ''; PREP.wall = 0; PREP.audio = 0; PREP.t0 = 0; prepUI();
+  PREP.running = true; PREP.err = ''; PREP.wall = 0; PREP.audio = 0; PREP.t0 = 0; PREP.inprog.clear(); PREP.lanes = {}; PREP.cpuOff = false; prepUI();
   if(!playing) keepAwake(true);
   try{
     const ln = curNeural();
@@ -951,21 +988,36 @@ async function prepRun(){
       for(let k = 0; k < 120 && !(NV.dec && NV.decReady) && active(); k++){ if(NV.ready === 'pocket' && NV.dec === undefined) decWorker(); await new Promise(r => setTimeout(r, 500)); }
     }
     const h = await ensureHave(v.key); if(!h) throw new Error('Der Speicher auf dem Gerät ist nicht verfügbar.');
-    let pending = null;   // the next block is already computing while the previous one is packed and stored
-    for(;;){
-      if(!active()) break;
-      await prepGate(active);
-      if(!active()) break;
-      const b = nextPrepBlock(h);
-      const started = b >= 0 ? prepCompute(b, v, job.expr) : null;
-      if(started) PREP.cur = b;
-      if(pending) await prepStore(pending, v, book, h);
-      if(!started) break;
-      pending = await started;
-      if(!active()) break;
+    // one lane per engine; each one computes a block while storing the previous one
+    const lane = async kind => {
+      const st = PREP.lanes[kind] = { audio: 0, t0: performance.now(), blocks: 0, on: true };
+      let pending = null;
+      try{
+        for(;;){
+          if(!active() || !st.on) break;
+          if(kind === 'cpu'){ await prepGate(active); if(!active() || PREP.cpuOff) break; }
+          const b = nextPrepBlock(h);
+          if(b >= 0) PREP.inprog.add(b);
+          const started = b >= 0 ? prepCompute(b, v, job.expr, kind) : null;
+          if(pending){ await prepStore(pending, v, book, h); PREP.inprog.delete(pending.b); st.audio += pending.dur || 0; st.blocks++; laneOk(kind); laneCheck(); pending = null; }
+          if(!started) break;
+          try{ pending = await started; }catch(e){ PREP.inprog.delete(b); throw e; }
+          if(!active()) break;
+        }
+        if(pending && active()){ await prepStore(pending, v, book, h); st.blocks++; laneOk(kind); }
+      }finally{ if(pending) PREP.inprog.delete(pending.b); st.on = false; }
+    };
+    const lanes = [lane('cpu').catch(e => { PREP.err = e.message || String(e); })];
+    if(v.model === 'pocket' && gpuUsable()){
+      lanes.push((async () => {
+        try{ await gpuStart(); }catch(e){ return; }   // no GPU here: the processor does it alone
+        if(!active()) return;
+        await lane('gpu');
+      })().catch(e => {
+        gpuStop(); PREP.cpuOff = false;
+        const g = store.get('gpu', {}); g.runFails = (g.runFails || 0) + 1; if(g.runFails >= 2 && !g.ok) g.off = true; store.set('gpu', g); if(active() && PREP.lanes.cpu && !PREP.lanes.cpu.on) prepRunLater(); }));
     }
-    PREP.cur = -1;
-    if(pending && active()) await prepStore(pending, v, book, h);
+    await Promise.all(lanes);
     if(active() && h.size === segBlocks().length){
       const j = prepJob(); j.done = true; j.on = false; setPrepJob(j);
       toast(`Fertig: „${doc.name}“ ist komplett vorbereitet und spielt jetzt ohne Wartezeit.`);
@@ -973,15 +1025,30 @@ async function prepRun(){
     }
   }catch(e){ PREP.err = e.message || String(e); }
   finally{
-    PREP.running = false; PREP.cur = -1; prepExtraDecoder(false);
+    PREP.running = false; PREP.inprog.clear(); gpuStop();
     if(!playing){ keepAwake(false); prepKeep(false); }
     prepUI(); if(!$('#sheetChapters').hidden) renderChapters();
   }
 }
+function laneOk(kind){ if(kind !== 'gpu') return; const g = store.get('gpu', {}); if(!g.ok){ g.ok = true; store.set('gpu', g); } store.set('gpuTry', 0); }
+function prepRunLater(){ setTimeout(() => { if(!PREP.running) prepRun(); }, 1500); }
+/* once both engines have finished a couple of blocks: if the graphics chip is far faster, it works alone
+   (less memory and heat); if it is far slower, it stops */
+function laneCheck(){
+  const c = PREP.lanes.cpu, g = PREP.lanes.gpu; if(!c || !g || g.blocks < 2 || c.blocks < 2) return;
+  const now = performance.now(), cs = c.audio / ((now - c.t0) / 1000), gs = g.audio / ((now - g.t0) / 1000);
+  const st = store.get('gpu', {}); st.speed = +gs.toFixed(2); st.cpu = +cs.toFixed(2); store.set('gpu', st);
+  if(gs > 2.5 * cs && !PREP.cpuOff) PREP.cpuOff = true;
+  else if(gs < 0.25 * cs && g.on){ g.on = false; }
+}
 /* compute every sentence of a block (sentences playback already asked for are shared) */
-async function prepCompute(b, v, ex){
+async function prepCompute(b, v, ex, kind){
   const B = segBlocks()[b], t0 = performance.now(), n = curNeural();
   if(!PREP.t0) PREP.t0 = t0;
+  if(kind === 'gpu'){
+    const list = []; for(let i = B.start; i < B.end; i++) list.push({ text: doc.sentences[i].t });
+    return { b, B, res: await Promise.all(gpuSynthMany(v, list, ex)), t0 };
+  }
   const sameLive = n && n.key === v.key && ex === expr;
   const ps = new Array(B.end - B.start), todo = [];
   for(let i = B.start; i < B.end; i++){
@@ -1015,7 +1082,7 @@ async function prepStore(job, v, book, h){
   h.set(b, meta);
   for(let i = B.start; i < B.end; i++) if(i > idx + 1) NV.cache.delete(keyBase() + '|' + i);   // stored now: keep memory small
   applyStoredDur(v.key);
-  PREP.wall += (performance.now() - t0) / 1000; PREP.audio += dur;
+  PREP.wall += (performance.now() - t0) / 1000; PREP.audio += dur; job.dur = dur;
   prepUI();
 }
 async function audioDeleteBook(book, vkey){
@@ -1080,6 +1147,9 @@ function renderPrepSheet(){
   const facts = [`Hörzeit: ca. ${durTxt(s.listenSec)}`, `Speicher: ca. ${Math.max(1, Math.round(s.mb))} MB`];
   if(!s.full) facts.push(`Fertig: ${s.pctTxt} %` + (s.pct < 100 ? ` · noch ca. ${durTxt(s.etaSec)}${s.measured ? '' : ' (Schätzung, wird gleich gemessen)'}` : ''));
   if(PREP.running && s.measured) facts.push(`Dein Gerät rechnet ${s.speed.toFixed(1).replace('.', ',')}-mal so schnell, wie gesprochen wird.`);
+  if(PREP.running && PREP.gload != null) facts.push(`Grafikchip wird eingerichtet: ${PREP.gload} % (einmalig ca. 130 MB, am besten im WLAN)`);
+  const gl = PREP.lanes.gpu;
+  if(PREP.running && gl && gl.blocks) facts.push(PREP.cpuOff ? 'Der Grafikchip rechnet allein, weil er viel schneller ist.' : 'Grafikchip und Prozessor rechnen gemeinsam.');
   if(PREP.err) facts.push('Unterbrochen: ' + PREP.err);
   $('#prepFacts').innerHTML = facts.map(f => `<div>${esc(f)}</div>`).join('');
   const go = $('#prepGo');
