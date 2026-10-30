@@ -203,6 +203,7 @@ input[type=range]{width:100%;accent-color:var(--accent);margin:0;height:22px}
 .sheet h3{font-family:var(--f-display);font-weight:700;font-size:19px;margin:0 0 4px}
 .sheet .sub{font-size:13px;color:var(--muted);margin:0 0 12px;max-width:60ch}
 .sheet-body{overflow-y:auto;min-height:0;display:flex;flex-direction:column;gap:6px}
+.vmore{display:block;width:100%;margin:12px 0 4px;padding:11px;border-radius:12px;background:var(--raise);font-weight:600;color:var(--accent)}
 .vgroup{font-size:11px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--muted);margin:12px 0 4px}
 .vrow{display:flex;align-items:center;gap:10px;padding:9px 10px;border-radius:12px;width:100%;text-align:left}
 .vrow:hover{background:var(--raise)}
@@ -315,7 +316,7 @@ textarea{min-height:130px;resize:vertical;font-family:var(--f-read)}
 <div class="sheet" id="sheetVoice" hidden role="dialog" aria-label="Stimme wählen">
   <div class="sheet-in"><div class="grab"></div>
     <h3>Stimme</h3>
-    <p class="sub">Die Stimmen werden einmal geladen (am besten im WLAN) und laufen danach offline auf deinem Gerät. Die acht neuen Stimmen teilen sich einen Download. Tippe auf ▶ für eine Hörprobe.</p>
+    <p class="sub">Die Stimmen werden einmal geladen (am besten im WLAN) und laufen danach offline auf deinem Gerät. Alle KI-Stimmen teilen sich einen Download. Tippe auf ▶ für eine Hörprobe.</p>
     <button class="prep-card" id="voicePrep" type="button" hidden><b id="voicePrepT">Ganzes Buch vorbereiten</b><span id="voicePrepS">Einmal berechnen, danach ohne Wartezeit hören</span></button>
     <div class="sheet-body" id="voiceList"></div>
     <div class="vgroup">Ausdruck</div>
@@ -324,8 +325,8 @@ textarea{min-height:130px;resize:vertical;font-family:var(--f-read)}
       <button class="chip" type="button" data-expr="1" aria-pressed="true">Normal</button>
       <button class="chip" type="button" data-expr="1.35" aria-pressed="false">Lebhaft</button>
     </div>
-    <p class="sub" style="margin:14px 0 0;font-size:12px">Neue Stimmen: Pocket TTS von Kyutai (CC BY 4.0), für das Gerät umgewandelt. Hörbuch-Stimme: Piper.</p>
-    <div class="appver">App-Stand: <span id="appVer">30.10.2026, 13:06</span></div>
+    <p class="sub" style="margin:14px 0 0;font-size:12px">KI-Stimmen: Pocket TTS von Kyutai (CC BY 4.0), für das Gerät umgewandelt. Hörbuch-Stimme: Piper. Zahlen werden vor dem Vorlesen ausgeschrieben.</p>
+    <div class="appver">App-Stand: <span id="appVer">30.10.2026, 13:39</span></div>
   </div>
 </div>
 
@@ -455,15 +456,30 @@ let follow = true, followPaused = false, view = store.get('view', 'cover');
 
 /* ---------- Voices ---------- */
 const VOICES = [
-  { key:'pk-anna', model:'pocket', speaker:'anna', name:'Anna', desc:'weiblich · warm und lebendig', mb:150, hue:'#8A3D52', group:'p' },
-  { key:'pk-eve', model:'pocket', speaker:'eve', name:'Eve', desc:'weiblich · klar', mb:150, hue:'#6B3D8A', group:'p' },
-  { key:'pk-mary', model:'pocket', speaker:'mary', name:'Mary', desc:'weiblich · ruhig', mb:150, hue:'#3D5E8A', group:'p' },
-  { key:'pk-azelma', model:'pocket', speaker:'azelma', name:'Azelma', desc:'weiblich · hell', mb:150, hue:'#8A3D7E', group:'p' },
-  { key:'pk-juergen', model:'pocket', speaker:'juergen', name:'Jürgen', desc:'männlich · deutscher Sprecher', mb:150, hue:'#2D7A5E', group:'p' },
-  { key:'pk-michael', model:'pocket', speaker:'michael', name:'Michael', desc:'männlich · tief', mb:150, hue:'#2D5B7A', group:'p' },
-  { key:'pk-giovanni', model:'pocket', speaker:'giovanni', name:'Giovanni', desc:'männlich · lebhaft', mb:150, hue:'#7A6A2D', group:'p' },
-  { key:'pk-javert', model:'pocket', speaker:'javert', name:'Javert', desc:'männlich · ernst', mb:150, hue:'#3A2D7A', group:'p' },
-  { key:'hoerbuch', model:'hoerbuch', name:'Hörbuch', desc:'männlich · Erzählstimme', mb:64, hue:'#7A4E2D', group:'h' }
+  { key:'pk-anna', model:'pocket', speaker:'anna', name:'Anna', desc:'weiblich · warm und lebendig', mb:150, hue:'#8A3D52', group:'r' },
+  { key:'pk-eponine', model:'pocket', speaker:'eponine', name:'Eponine', desc:'lebendig · mittlere Stimmlage', mb:150, hue:'#9A4A3A', group:'r' },
+  { key:'pk-jane', model:'pocket', speaker:'jane', name:'Jane', desc:'weiblich · sehr lebendig, hell', mb:150, hue:'#8A3D7E', group:'r' },
+  { key:'pk-alba', model:'pocket', speaker:'alba', name:'Alba', desc:'tiefe Stimme · lebendig', mb:150, hue:'#3D6E8A', group:'r' },
+  { key:'pk-caro_davy', model:'pocket', speaker:'caro_davy', name:'Caro', desc:'natürlich · ruhig erzählend', mb:150, hue:'#6B3D8A', group:'r' },
+  { key:'pk-george', model:'pocket', speaker:'george', name:'Georg', desc:'männlich · natürlicher Erzähler', mb:150, hue:'#2D7A5E', group:'r' },
+  { key:'pk-paul', model:'pocket', speaker:'paul', name:'Paul', desc:'männlich · klarer Erzähler', mb:150, hue:'#2D5B7A', group:'r' },
+  { key:'pk-daan', model:'pocket', speaker:'daan', name:'Daan', desc:'männlich · tief', mb:150, hue:'#3A2D7A', group:'r' },
+  { key:'hoerbuch', model:'hoerbuch', name:'Hörbuch', desc:'männlich · Erzählstimme', mb:64, hue:'#7A4E2D', group:'r' },
+  { key:'pk-mary', model:'pocket', speaker:'mary', name:'Mary', desc:'weiblich · lebendig', mb:150, hue:'#3D5E8A', group:'w' },
+  { key:'pk-eve', model:'pocket', speaker:'eve', name:'Eve', desc:'weiblich · klar', mb:150, hue:'#6B3D8A', group:'w' },
+  { key:'pk-azelma', model:'pocket', speaker:'azelma', name:'Azelma', desc:'weiblich · hell', mb:150, hue:'#8A3D7E', group:'w' },
+  { key:'pk-cosette', model:'pocket', speaker:'cosette', name:'Cosette', desc:'weiblich · sanft', mb:150, hue:'#8A5A3D', group:'w' },
+  { key:'pk-vera', model:'pocket', speaker:'vera', name:'Vera', desc:'weiblich · ruhig, sehr natürlich', mb:150, hue:'#5A8A3D', group:'w' },
+  { key:'pk-bill_boerst', model:'pocket', speaker:'bill_boerst', name:'Bill', desc:'männlich · ruhig', mb:150, hue:'#4A6A2D', group:'w' },
+  { key:'pk-michael', model:'pocket', speaker:'michael', name:'Michael', desc:'männlich · tief, sachlich', mb:150, hue:'#2D5B7A', group:'w' },
+  { key:'pk-fantine', model:'pocket', speaker:'fantine', name:'Fantine', desc:'weiblich · sachlich', mb:150, hue:'#7A3D5A', group:'w' },
+  { key:'pk-peter_yearsley', model:'pocket', speaker:'peter_yearsley', name:'Peter', desc:'männlich · tief', mb:150, hue:'#2D4A7A', group:'w' },
+  { key:'pk-jean', model:'pocket', speaker:'jean', name:'Jean', desc:'männlich · sachlich', mb:150, hue:'#5A5A2D', group:'w' },
+  { key:'pk-rafael', model:'pocket', speaker:'rafael', name:'Rafael', desc:'männlich · ruhig', mb:150, hue:'#7A5A2D', group:'w' },
+  { key:'pk-lola', model:'pocket', speaker:'lola', name:'Lola', desc:'weiblich · sachlich', mb:150, hue:'#8A3D4A', group:'w' },
+  { key:'pk-charles', model:'pocket', speaker:'charles', name:'Charles', desc:'männlich · sehr tief', mb:150, hue:'#3A3A6A', group:'w' },
+  { key:'pk-juergen', model:'pocket', speaker:'juergen', name:'Jürgen', desc:'männlich · deutscher Sprecher', mb:150, hue:'#2D7A5E', group:'w' },
+  { key:'pk-giovanni', model:'pocket', speaker:'giovanni', name:'Giovanni', desc:'männlich · lebhaft', mb:150, hue:'#7A6A2D', group:'w' }
 ];
 const VBY = Object.fromEntries(VOICES.map(v => [v.key, v]));
 let neuralOK = typeof Worker !== 'undefined' && typeof (window.AudioContext || window.webkitAudioContext) !== 'undefined';
@@ -510,6 +526,52 @@ function voiceLabel(){
 function updateVoiceLabel(){ $('#voiceName').textContent = voiceLabel(); renderMini(); try{ prepUI(); }catch(e){} }
 
 /* ---------- Neural engine (worker) ---------- */
+/* ---------- Numbers in words ----------
+   The voices were trained on written-out text and stumble over digits ("358", "14:30", "Zero-7").
+   Before a sentence is spoken, numbers are written out the way a narrator would read them. */
+const NUM_ONES = ['null', 'eins', 'zwei', 'drei', 'vier', 'fünf', 'sechs', 'sieben', 'acht', 'neun', 'zehn', 'elf', 'zwölf', 'dreizehn', 'vierzehn', 'fünfzehn', 'sechzehn', 'siebzehn', 'achtzehn', 'neunzehn'];
+const NUM_TENS = ['', '', 'zwanzig', 'dreißig', 'vierzig', 'fünfzig', 'sechzig', 'siebzig', 'achtzig', 'neunzig'];
+function deNum(n){
+  if(n < 20) return NUM_ONES[n];
+  if(n < 100){ const t = Math.floor(n / 10), o = n % 10; return (o ? (o === 1 ? 'ein' : NUM_ONES[o]) + 'und' : '') + NUM_TENS[t]; }
+  if(n < 1000){ const h = Math.floor(n / 100), r = n % 100; return (h === 1 ? 'ein' : NUM_ONES[h]) + 'hundert' + (r ? deNum(r) : ''); }
+  if(n < 1e6){ const t = Math.floor(n / 1000), r = n % 1000; return (t === 1 ? 'ein' : deNum(t)) + 'tausend' + (r ? deNum(r) : ''); }
+  if(n < 1e9){ const m = Math.floor(n / 1e6), r = n % 1e6; return (m === 1 ? 'eine Million' : deNum(m) + ' Millionen') + (r ? ' ' + deNum(r) : ''); }
+  if(n < 1e12){ const m = Math.floor(n / 1e9), r = n % 1e9; return (m === 1 ? 'eine Milliarde' : deNum(m) + ' Milliarden') + (r ? ' ' + deNum(r) : ''); }
+  return digitsSay(String(n));
+}
+const digitsSay = s => s.split('').map(d => NUM_ONES[+d]).join(' ');
+const intSay = s => s.length > 12 || (s.length > 1 && s[0] === '0') ? digitsSay(s) : deNum(+s);
+const yearSay = n => deNum(Math.floor(n / 100)) + 'hundert' + (n % 100 ? deNum(n % 100) : '');
+function ordStem(n){
+  if(n === 1) return 'erst'; if(n === 3) return 'dritt'; if(n === 7) return 'siebt'; if(n === 8) return 'acht';
+  if(n < 20) return deNum(n) + 't';
+  const w = deNum(n); return (w.endsWith('eins') ? w.slice(0, -4) + 'ers' : w) + 'st';
+}
+const ORD_ART = /(^|\s)(am|im|vom|zum|beim|dem|den|des|der|die|das|ein|eine|einer|eines|einem|einen|zur|ihr|ihre|ihrem|ihren|ihres|sein|seine|seinem|seinen|seines|unser|unsere|unserem|dieser|diese|dieses|diesem|diesen|jeder|jede|jedes|jedem|jeden)\s$/i;
+const ORD_EN = /(^|\s)(am|im|vom|zum|beim|dem|den|des|einer|eines|einem|einen|zur|ihrem|ihren|ihres|seinem|seinen|seines|unserem|diesem|diesen|dieses|jedem|jeden|jedes)\s$/i;
+const ORD_PREP_DER = /(^|\s)(in|an|auf|aus|bei|mit|nach|seit|von|zu|vor|hinter|über|unter|neben|zwischen|während|wegen)\s+der\s$/i;
+const ORD_NEXT = /^\s+(Januar|Februar|März|April|Mai|Juni|Juli|August|September|Oktober|November|Dezember|Jahrhundert|Jahrtausend|Stock|Stockwerk|Mal|Platz|Rang|Kapitel|Teil|Band|Auflage|Klasse|Tag|Woche|Monat|Jahr|Runde|Stufe|Grad|Generation|Welle|Reihe|Etage|Akt|Szene|Mai)\b/;
+function sayNumbers(t){
+  if(!/\d/.test(t)) return t;
+  let s = t;
+  s = s.replace(/(\d{1,3})(?:\.(\d{3}))+(?![\d,])/g, m => m.replace(/\./g, ''));                    // 1.000.000
+  s = s.replace(/\b(\d{1,2}):(\d{2})(\s*Uhr)?\b/g, (m, h, mm) => deNum(+h) + ' Uhr' + (+mm ? ' ' + deNum(+mm) : ''));   // 14:30 Uhr
+  s = s.replace(/(\d+),(\d+)/g, (m, a, b) => intSay(a) + ' Komma ' + digitsSay(b));                  // 2,5
+  s = s.replace(/(\d+)\s?%/g, (m, a) => intSay(a) + ' Prozent');
+  s = s.replace(/(\d+)\s?€/g, (m, a) => intSay(a) + ' Euro').replace(/€\s?(\d+)/g, (m, a) => intSay(a) + ' Euro');
+  s = s.replace(/(^|[^\p{L}\d-])(\d+)\s?[–-]\s?(\d+)(?![\p{L}\d-])/gu, (m, p, a, b) => p + intSay(a) + ' bis ' + intSay(b));   // 3–4
+  s = s.replace(/^(\d{1,2})\.\s+(?=\p{Lu})/u, (m, a) => deNum(+a) + '. ');                           // "1. Verluste" (numbered heading)
+  s = s.replace(/(\d{1,3})\.(?=\s+\S)/g, (m, a, off, all) => {                                        // ordinals: "am 3. Mai", "im 2. Stock"
+    const before = all.slice(0, off), after = all.slice(off + m.length);
+    if(!ORD_ART.test(before) && !ORD_NEXT.test(after) && !/^\s+\p{Ll}/u.test(after)) return m;
+    return ordStem(+a) + (ORD_EN.test(before) || ORD_PREP_DER.test(before) ? 'en' : 'e');
+  });
+  s = s.replace(/\b(1[1-9]\d{2})\b(?!\s*(Euro|Prozent|Meter|Kilometer|Kilo|Gramm|Stück|Menschen|Leute|Seiten|Mal))/g, (m, a) => yearSay(+a));   // 1984
+  s = s.replace(/\d+/g, m => intSay(m));
+  return s.replace(/\s+/g, ' ');
+}
+
 const WORKER_URL = 'tts-worker-760d4487.js';
 const NV = { worker:null, ready:null, loading:null, waiters:[], reqs:new Map(), nextId:1, cache:new Map(), keyBase:'', ctx:null, src:null, cached:{}, prog:{} };
 function nWorker(){
@@ -612,7 +674,7 @@ function synthReq(text, v){
   return new Promise((res, rej) => {
     NV.reqs.set(id, {res, rej, live: true});
     const split = v.model === 'pocket' && NV.dec && NV.decReady;
-    nWorker().postMessage({type:'synth', id, voice: v.model, speaker: v.speaker || null, text, rate: 1, expr, mode: split ? 'latents' : undefined, prio: true});
+    nWorker().postMessage({type:'synth', id, voice: v.model, speaker: v.speaker || null, text: sayNumbers(text), rate: 1, expr, mode: split ? 'latents' : undefined, prio: true});
   });
 }
 function getAudio(i){
@@ -819,7 +881,7 @@ const idbVal = r => new Promise((res, rej) => { r.onsuccess = () => res(r.result
 /* Every stored sentence is remembered by its text (and voice), no matter in which book or block it was made.
    A new upload of the same book (or a corrected version) finds its unchanged sentences at once; only new or
    edited sentences are computed. Playback plays runs of sentences straight out of the stored MP3 blocks. */
-const sentHash = t => fnv(t).toString(36) + fnv([...t].reverse().join('')).toString(36) + t.length.toString(36);
+const sentHash = t => (/\d/.test(t) ? 'n1' : '') + fnv(t).toString(36) + fnv([...t].reverse().join('')).toString(36) + t.length.toString(36);
 const SH = { forDoc: null, h: [], chars: 0 };
 function sentHashes(){
   if(SH.forDoc === doc.sentences) return SH.h;
@@ -900,7 +962,7 @@ async function storedChunk(i){
 
 /* preparing uses the same two workers as playback, with lower priority: reading aloud always goes first */
 function nCall(w, msg, transfer){ return new Promise((res, rej) => { const id = NV.nextId++; NV.reqs.set(id, { res, rej, live: false }); w.postMessage({ ...msg, id }, transfer || []); }); }
-const prepSynth = (v, text, ex) => nCall(nWorker(), { type: 'synth', voice: v.model, speaker: v.speaker || null, text, rate: 1, expr: ex, mode: v.model === 'pocket' && NV.dec && NV.decReady ? 'latents' : undefined, prio: false });
+const prepSynth = (v, text, ex) => nCall(nWorker(), { type: 'synth', voice: v.model, speaker: v.speaker || null, text: sayNumbers(text), rate: 1, expr: ex, mode: v.model === 'pocket' && NV.dec && NV.decReady ? 'latents' : undefined, prio: false });
 /* phones with more cores get a third worker for turning latents into audio while a book is prepared */
 function prepExtraDecoder(on){
   if(on){
@@ -915,7 +977,7 @@ function prepExtraDecoder(on){
 }
 /* the new voices compute a whole block in one job, 4 sentences side by side */
 function prepSynthMany(v, list, ex){
-  const items = list.map(x => ({ id: NV.nextId++, text: x.text }));
+  const items = list.map(x => ({ id: NV.nextId++, text: sayNumbers(x.text) }));
   const ps = items.map(it => new Promise((res, rej) => NV.reqs.set(it.id, { res, rej, live: false })));
   nWorker().postMessage({ type: 'synthMany', items, speaker: v.speaker || null, expr: ex, batch: 4, mode: NV.dec && NV.decReady ? 'latents' : 'audio', prio: false });
   return ps;
@@ -1003,7 +1065,7 @@ function gpuStop(){
   GP.w = null; GP.ready = null; GP.loaded = false; PREP.gload = null; store.set('gpuTry', 0);
 }
 function gpuSynthMany(v, list, ex){
-  const items = list.map(x => ({ id: NV.nextId++, text: x.text }));
+  const items = list.map(x => ({ id: NV.nextId++, text: sayNumbers(x.text) }));
   const ps = items.map(it => new Promise((res, rej) => GP.reqs.set(it.id, { res, rej })));
   GP.w.postMessage({ type: 'synthMany', items, speaker: v.speaker || null, expr: ex, batch: 8, mode: 'audio', prio: false });
   return ps;
@@ -1930,8 +1992,16 @@ function renderVoices(){
   let h = '';
   if(neuralOK){
     let lastG = null;
+    const selV = VOICES.find(x => sel === 'n:' + x.key), showMore = NV.moreVoices || (selV && selV.group === 'w');
     for(const v of VOICES){
-      if(v.group !== lastG){ lastG = v.group; h += `<div class="vgroup">${v.group === 'p' ? 'Neue Stimmen' : 'Klassische Stimme'}</div>`; }
+      if(v.group !== lastG){
+        lastG = v.group;
+        if(v.group === 'w'){
+          h += `<button class="vmore" type="button" id="voiceMore" aria-expanded="${!!showMore}">${showMore ? 'Weitere Stimmen ausblenden' : `Weitere Stimmen anhören (${VOICES.filter(x => x.group === 'w').length})`}</button>`;
+          if(!showMore) break;
+        }
+        h += `<div class="vgroup">${v.group === 'r' ? 'Empfohlen für Hörbücher' : 'Weitere Stimmen'}</div>`;
+      }
       const on = sel === 'n:' + v.key;
       const st = NV.ready === v.model || NV.cached[v.model] ? '<span class="vstate ok">geladen</span>'
         : NV.loading === v.model ? '<span class="vstate">lädt …</span>'
@@ -2316,6 +2386,7 @@ $('#speedChips').addEventListener('click', e => { const c = e.target.closest('[d
 $('#sleepChips').addEventListener('click', e => { const c = e.target.closest('[data-sleep]'); if(c){ setSleep(c.dataset.sleep); closeSheets(); } });
 $('#exprChips').addEventListener('click', e => { const c = e.target.closest('[data-expr]'); if(c) setExpr(+c.dataset.expr); });
 $('#voiceList').addEventListener('click', e => {
+  if(e.target.closest('#voiceMore')){ NV.moreVoices = !(NV.moreVoices || $('#voiceMore').getAttribute('aria-expanded') === 'true'); renderVoices(); return; }
   const s = e.target.closest('[data-sample]'); if(s){ e.stopPropagation(); playSample(s.dataset.sample, s); return; }
   const ds = e.target.closest('[data-dsample]'); if(ds){ e.stopPropagation(); playDeviceSample(ds.dataset.dsample); return; }
   const r = e.target.closest('[data-sel]'); if(r) chooseVoice(r.dataset.sel);
