@@ -325,7 +325,7 @@ textarea{min-height:130px;resize:vertical;font-family:var(--f-read)}
       <button class="chip" type="button" data-expr="1.35" aria-pressed="false">Lebhaft</button>
     </div>
     <p class="sub" style="margin:14px 0 0;font-size:12px">Neue Stimmen: Pocket TTS von Kyutai (CC BY 4.0), für das Gerät umgewandelt. Hörbuch-Stimme: Piper.</p>
-    <div class="appver">App-Stand: <span id="appVer">27.10.2026, 10:19</span></div>
+    <div class="appver">App-Stand: <span id="appVer">30.10.2026, 12:46</span></div>
   </div>
 </div>
 
@@ -710,8 +710,15 @@ function playChunk(ch, onend){
   NV.chunk = ch;
   if(AE.ok){
     const a = audioEl();
-    const mine = { stop(){ a.onended = null; a.onerror = null; try{ a.pause(); }catch(e){} }, clock: () => a.currentTime || 0 };
+    let iv = 0;
+    const mine = { stop(){ clearInterval(iv); a.onended = null; a.onerror = null; try{ a.pause(); }catch(e){} }, clock: () => a.currentTime || 0 };
     NV.src = mine;
+    if(ch.stopAt){   // a run inside a stored block: end where the next (not wanted) sentence begins
+      iv = setInterval(() => {
+        if(NV.src !== mine){ clearInterval(iv); return; }
+        if((a.currentTime || 0) >= ch.stopAt - 0.03){ clearInterval(iv); a.onended = null; try{ a.pause(); }catch(e){} NV.src = null; onend && onend(); }
+      }, 40);
+    }
     if(AE.url) URL.revokeObjectURL(AE.url);
     AE.url = URL.createObjectURL(ch.blob);
     const fallback = () => { if(NV.src !== mine) return; AE.ok = false; NV.src = null; playChunkWA(ch, onend); };
@@ -735,10 +742,10 @@ async function playChunkWA(ch, onend){
   const buf = ctx.createBuffer(1, Math.max(1, ch.f32.length), ch.sr); buf.getChannelData(0).set(ch.f32);
   const src = ctx.createBufferSource(); src.buffer = buf; src.connect(ctx.destination);
   const r = ch.start < 0 ? 1 : rf(); if(r !== 1) src.playbackRate.value = r;
-  const t0 = ctx.currentTime, at = ch.seek || 0;
+  const t0 = ctx.currentTime, at = ch.seek || 0, len = ch.stopAt ? Math.max(0.01, ch.stopAt - at) : undefined;
   const mine = { stop(){ src.onended = null; try{ src.stop(); }catch(e){} }, clock: () => at + (ctx.currentTime - t0) * r };
   src.onended = () => { if(NV.src === mine){ NV.src = null; onend && onend(); } };
-  NV.src = mine; src.start(0, at);
+  NV.src = mine; len ? src.start(0, at, len) : src.start(0, at);
 }
 function playBuffer(res, padSec, onend){
   const pad = Math.round(res.sampleRate * padSec), f32 = new Float32Array(res.audio.length + pad); f32.set(res.audio);
@@ -794,7 +801,7 @@ async function nPlay(i){
    Each block is packed as MP3 and kept in IndexedDB on the device. Playback then simply plays the stored
    audio: no waiting, instant jumps and tempo. Blocks are addressed by their text, so they survive restarts. */
 const BLOCK_CHARS = 900, MP3_KBPS = 48, MP3_DELAY = 0.048;
-const PB = { db:null, segFor:null, blocks:[], of:null, chars:0, haveFor:null, have:{}, loading:{} };
+const PB = { db:null };
 const bookId = () => doc.libId || null;
 function audioDB(){
   if(PB.db) return PB.db;
@@ -809,64 +816,86 @@ function audioDB(){
 }
 const idbDone = tx => new Promise((res, rej) => { tx.oncomplete = () => res(); tx.onerror = tx.onabort = () => rej(tx.error || new Error('Speichern fehlgeschlagen')); });
 const idbVal = r => new Promise((res, rej) => { r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error); });
-/* fixed split of the book into blocks that never cross a chapter */
-function segBlocks(){
-  const S = doc.sentences;
-  if(PB.segFor === S) return PB.blocks;
-  PB.segFor = S; PB.blocks = []; PB.of = new Int32Array(S.length); PB.chars = 0;
+/* Every stored sentence is remembered by its text (and voice), no matter in which book or block it was made.
+   A new upload of the same book (or a corrected version) finds its unchanged sentences at once; only new or
+   edited sentences are computed. Playback plays runs of sentences straight out of the stored MP3 blocks. */
+const sentHash = t => fnv(t).toString(36) + fnv([...t].reverse().join('')).toString(36) + t.length.toString(36);
+const SH = { forDoc: null, h: [], chars: 0 };
+function sentHashes(){
+  if(SH.forDoc === doc.sentences) return SH.h;
+  SH.forDoc = doc.sentences; SH.h = doc.sentences.map(s => sentHash(s.t)); SH.chars = doc.sentences.reduce((a, s) => a + s.t.length, 0);
+  return SH.h;
+}
+/* blocks of the first version were addressed as a whole; they are converted to the sentence index once */
+function oldBlocks(){
+  const S = doc.sentences, out = [];
   const ranges = doc.chapters && doc.chapters.length ? doc.chapters.map(c => [c.start, c.end]) : [[0, S.length]];
   for(const [cs, ce] of ranges){
     let s = cs;
     while(s < ce){
       let e = s, ch = 0, txt = '';
       do { ch += S[e].t.length; txt += S[e].t + '\n'; e++; } while(e < ce && ch < BLOCK_CHARS);
-      const b = PB.blocks.length;
-      PB.blocks.push({ start: s, end: e, chars: ch, h: fnv(txt).toString(16) + fnv(txt.split('').reverse().join('')).toString(16) + ch.toString(36) });
-      for(let i = s; i < e; i++) PB.of[i] = b;
-      PB.chars += ch; s = e;
+      out.push({ start: s, end: e, h: fnv(txt).toString(16) + fnv(txt.split('').reverse().join('')).toString(16) + ch.toString(36) });
+      s = e;
     }
   }
-  return PB.blocks;
+  return out;
 }
-/* which blocks are already stored for a voice (loaded once per book and voice) */
+const IX = {};   // voice key -> { map: Map(sentence hash -> {m, k}), migratedFor, loading }
 async function ensureHave(vkey){
-  const book = bookId(); if(!book) return null;
-  segBlocks();
-  if(PB.haveFor !== PB.segFor){ PB.haveFor = PB.segFor; PB.have = {}; PB.loading = {}; }
-  if(PB.have[vkey]) return PB.have[vkey];
-  if(!PB.loading[vkey]) PB.loading[vkey] = (async () => {
+  if(!doc.sentences.length) return null;
+  const sh = sentHashes();
+  let ix = IX[vkey];
+  if(ix && ix.migratedFor === doc.sentences) return ix;
+  if(ix && ix.loading) { try{ await ix.loading; }catch(e){} if(IX[vkey] && IX[vkey].migratedFor === doc.sentences) return IX[vkey]; }
+  const job = (async () => {
     const db = await audioDB();
-    const metas = await idbVal(db.transaction('meta').objectStore('meta').index('bv').getAll([book, vkey]));
-    const byH = new Map(metas.map(m => [m.h, m]));
+    const metas = (await idbVal(db.transaction('meta').objectStore('meta').getAll())).filter(m => m.voice === vkey);
+    const fix = [];
+    const legacy = metas.filter(m => !m.sh);
+    if(legacy.length){
+      const byH = new Map(legacy.map(m => [m.h, m]));
+      for(const B of oldBlocks()){ const m = byH.get(B.h); if(m && m.offs.length === B.end - B.start){ m.sh = sh.slice(B.start, B.end); fix.push(m); } }
+    }
     const map = new Map();
-    PB.blocks.forEach((b, k) => { const m = byH.get(b.h); if(m) map.set(k, m); });
-    if(PB.haveFor === PB.segFor) PB.have[vkey] = map;
+    for(const m of metas) if(m.sh) m.sh.forEach((h, k) => { if(!map.has(h)) map.set(h, { m, k }); });
+    // remember that this book uses these blocks too (so deleting another book keeps them)
+    const book = bookId(), seen = new Set();
+    if(book) for(const h of sh){ const e = map.get(h); if(!e || seen.has(e.m)) continue; seen.add(e.m); const bs = e.m.books || (e.m.book ? [e.m.book] : []); if(!bs.includes(book)){ e.m.books = [...bs, book]; if(!fix.includes(e.m)) fix.push(e.m); } }
+    if(fix.length){ const tx = db.transaction('meta', 'readwrite'); fix.forEach(m => tx.objectStore('meta').put(m)); await idbDone(tx); }
+    const out = { map, migratedFor: doc.sentences };
+    IX[vkey] = out;
     applyStoredDur(vkey);
-    return map;
+    return out;
   })();
-  try{ return await PB.loading[vkey]; }catch(e){ delete PB.loading[vkey]; return null; }
+  IX[vkey] = Object.assign(ix || {}, { loading: job });
+  try{ const r = await job; delete r.loading; return r; }catch(e){ delete IX[vkey]; return null; }
 }
-function haveNow(vkey){ return PB.haveFor === doc.sentences && PB.have[vkey] || null; }
+function haveNow(vkey){ const ix = IX[vkey]; return ix && ix.map && ix.migratedFor === doc.sentences ? ix : null; }
 function isStored(i){
   const n = curNeural(); if(!n) return false;
-  const h = haveNow(n.key); return !!(h && PB.of && h.has(PB.of[i]));
+  const ix = haveNow(n.key); return !!(ix && ix.map.has(sentHashes()[i]));
 }
-/* stored blocks know their exact sentence lengths, so the clock is exact there */
+/* stored sentences know their exact length, so the clock is exact there */
 function applyStoredDur(vkey){
-  const n = curNeural(), h = haveNow(vkey); if(!n || n.key !== vkey || !h) return;
-  const arr = durArr();
-  for(const [b, m] of h){ const B = PB.blocks[b]; for(let k = 0; k < m.offs.length; k++) arr[B.start + k] = (k + 1 < m.offs.length ? m.offs[k + 1] : m.dur) - m.offs[k]; }
+  const n = curNeural(), ix = haveNow(vkey); if(!n || n.key !== vkey || !ix) return;
+  const arr = durArr(), sh = sentHashes();
+  for(let i = 0; i < sh.length; i++){ const e = ix.map.get(sh[i]); if(e){ const m = e.m, k = e.k; arr[i] = (k + 1 < m.offs.length ? m.offs[k + 1] : m.dur) - m.offs[k]; } }
 }
 async function storedChunk(i){
-  const n = curNeural(); if(!n || !bookId()) return null;
-  const h = haveNow(n.key) || await ensureHave(n.key);
-  if(!h) return null;
-  const b = PB.of[i], m = h.get(b); if(!m) return null;
+  const n = curNeural(); if(!n) return null;
+  const ix = haveNow(n.key) || await ensureHave(n.key);
+  if(!ix) return null;
+  const sh = sentHashes(), e = ix.map.get(sh[i]); if(!e) return null;
+  let j = i + 1;   // longest run that continues inside the same stored block
+  while(j < sh.length){ const f = ix.map.get(sh[j]); if(!f || f.m !== e.m || f.k !== e.k + (j - i)) break; j++; }
   let blob = null;
-  try{ const db = await audioDB(); blob = await idbVal(db.transaction('mp3').objectStore('mp3').get(m.key)); }catch(e){}
-  if(!blob){ h.delete(b); return null; }
-  const B = PB.blocks[b], offs = m.offs.map(o => o + MP3_DELAY);
-  return { start: B.start, end: B.end, offs, dur: m.dur + MP3_DELAY, sr: m.sr, f32: null, blob, seek: i > B.start ? offs[i - B.start] : 0, stored: true };
+  try{ const db = await audioDB(); blob = await idbVal(db.transaction('mp3').objectStore('mp3').get(e.m.key)); }catch(err){}
+  if(!blob){ for(const h of e.m.sh || []) ix.map.delete(h); return null; }
+  const m = e.m, kEnd = e.k + (j - i);
+  const offs = m.offs.slice(e.k, kEnd).map(o => o + MP3_DELAY);
+  const stopAt = kEnd < m.offs.length ? m.offs[kEnd] + MP3_DELAY : 0;
+  return { start: i, end: j, offs, dur: m.dur + MP3_DELAY, sr: m.sr, f32: null, blob, seek: offs[0] > MP3_DELAY + 0.01 ? offs[0] : 0, stopAt, stored: true };
 }
 
 /* preparing uses the same two workers as playback, with lower priority: reading aloud always goes first */
@@ -900,14 +929,14 @@ function prepJob(){ const b = bookId(); return b ? prepJobs()[b] || null : null;
 function setPrepJob(j, book){ const all = prepJobs(), b = book || bookId(); if(!b) return; if(j) all[b] = j; else delete all[b]; store.set('prep', all); }
 function prepVoice(){ const j = prepJob(), n = curNeural(); return (j && VBY[j.voice]) || n || VBY['pk-anna']; }
 function prepStats(){
-  const v = prepVoice(), blocks = segBlocks(), h = haveNow(v.key);
-  let doneCh = 0; if(h) for(const b of h.keys()) doneCh += blocks[b] ? blocks[b].chars : 0;
-  const total = PB.chars || 1, cps = (cpsStats[v.key] && cpsStats[v.key].n >= 5) ? Math.min(22, Math.max(7, cpsStats[v.key].c / cpsStats[v.key].t)) : CPS;
+  const v = prepVoice(), ix = haveNow(v.key), sh = sentHashes();
+  let doneCh = 0, all = !!ix; if(ix) sh.forEach((h, i) => { if(ix.map.has(h)) doneCh += doc.sentences[i].t.length; else all = false; });
+  const total = SH.chars || 1, cps = (cpsStats[v.key] && cpsStats[v.key].n >= 5) ? Math.min(22, Math.max(7, cpsStats[v.key].c / cpsStats[v.key].t)) : CPS;
   const listenSec = total / cps, restAudio = (total - doneCh) / cps;
   const measured = PREP.audio > 0 && PREP.t0 > 0;
   const speed = measured ? PREP.audio / Math.max(1, (performance.now() - PREP.t0) / 1000) : 2;   // seconds of speech made per second; first guess until measured
   const exact = Math.min(100, doneCh / total * 100);
-  return { v, pct: exact, pctTxt: exact >= 10 || exact === 0 ? String(Math.floor(exact)) : exact.toFixed(1).replace('.', ','), full: !!h && h.size === blocks.length, known: !!h, listenSec, mb: listenSec * MP3_KBPS / 8 / 1000, etaSec: restAudio / speed, measured, speed };
+  return { v, pct: exact, pctTxt: exact >= 10 || exact === 0 ? String(Math.floor(exact)) : exact.toFixed(1).replace('.', ','), full: all, known: !!ix, listenSec, mb: listenSec * MP3_KBPS / 8 / 1000, etaSec: restAudio / speed, measured, speed };
 }
 /* while someone listens, reading aloud comes first: the preparation only continues once about two minutes
    ahead are ready, and it works on the part after that, so nothing is computed twice */
@@ -919,17 +948,23 @@ function liveBufferedSec(){
   for(let k = idx; k < doc.sentences.length && sec < 300; k++){ if(isStored(k) || arr[k] > 0) sec += sentDur(k); else break; }
   return sec;
 }
-function nextPrepBlock(h){
-  const blocks = segBlocks(), n = blocks.length; if(!n) return -1;
+function nextPrepBlock(ix){
+  const sh = sentHashes(), n = sh.length; if(!n) return null;
   let start = Math.min(idx, doc.sentences.length - 1);
   if(playing && engine() === 'neural'){   // skip what the listener's own computation is about to cover
     const lim = AHEAD_SEC * cpsNow(); let ch = 0;
     while(start < doc.sentences.length - 1 && ch < lim){ ch += doc.sentences[start].t.length; start++; }
   }
-  const from = PB.of && PB.of[start] || 0;
-  for(let k = 0; k < n; k++){ const b = (from + k) % n; if(!h.has(b) && !PREP.inprog.has(b)) return b; }
-  return -1;
+  const free = i => !ix.map.has(sh[i]) && !PREP.inprog.has(i);
+  for(let k = 0; k < n; k++){
+    const i = (start + k) % n; if(!free(i)) continue;
+    let e = i, ch = 0;   // a run of missing sentences, about a minute long
+    do { ch += doc.sentences[e].t.length; e++; } while(e < n && free(e) && ch < BLOCK_CHARS);
+    return { start: i, end: e };
+  }
+  return null;
 }
+const prepMark = (B, on) => { for(let i = B.start; i < B.end; i++) on ? PREP.inprog.add(i) : PREP.inprog.delete(i); };
 async function prepStart(){
   const n = curNeural(); if(!n || !bookId()) return;
   setPrepJob({ voice: n.key, expr, on: true });
@@ -997,15 +1032,15 @@ async function prepRun(){
           if(!active() || !st.on) break;
           if(kind === 'cpu'){ await prepGate(active); if(!active() || PREP.cpuOff) break; }
           const b = nextPrepBlock(h);
-          if(b >= 0) PREP.inprog.add(b);
-          const started = b >= 0 ? prepCompute(b, v, job.expr, kind) : null;
-          if(pending){ await prepStore(pending, v, book, h); PREP.inprog.delete(pending.b); st.audio += pending.dur || 0; st.blocks++; laneOk(kind); laneCheck(); pending = null; }
+          if(b) prepMark(b, true);
+          const started = b ? prepCompute(b, v, job.expr, kind) : null;
+          if(pending){ await prepStore(pending, v, book, h); prepMark(pending.B, false); st.audio += pending.dur || 0; st.blocks++; laneOk(kind); laneCheck(); pending = null; }
           if(!started) break;
-          try{ pending = await started; }catch(e){ PREP.inprog.delete(b); throw e; }
+          try{ pending = await started; }catch(e){ prepMark(b, false); throw e; }
           if(!active()) break;
         }
         if(pending && active()){ await prepStore(pending, v, book, h); st.blocks++; laneOk(kind); }
-      }finally{ if(pending) PREP.inprog.delete(pending.b); st.on = false; }
+      }finally{ if(pending) prepMark(pending.B, false); st.on = false; }
     };
     const lanes = [lane('cpu').catch(e => { PREP.err = e.message || String(e); })];
     if(v.model === 'pocket' && gpuUsable()){
@@ -1018,7 +1053,7 @@ async function prepRun(){
         const g = store.get('gpu', {}); g.runFails = (g.runFails || 0) + 1; if(g.runFails >= 2 && !g.ok) g.off = true; store.set('gpu', g); if(active() && PREP.lanes.cpu && !PREP.lanes.cpu.on) prepRunLater(); }));
     }
     await Promise.all(lanes);
-    if(active() && h.size === segBlocks().length){
+    if(active() && sentHashes().every(x => h.map.has(x))){
       const j = prepJob(); j.done = true; j.on = false; setPrepJob(j);
       toast(`Fertig: „${doc.name}“ ist komplett vorbereitet und spielt jetzt ohne Wartezeit.`);
       renderLib();
@@ -1043,7 +1078,7 @@ function laneCheck(){
 }
 /* compute every sentence of a block (sentences playback already asked for are shared) */
 async function prepCompute(b, v, ex, kind){
-  const B = segBlocks()[b], t0 = performance.now(), n = curNeural();
+  const B = b, t0 = performance.now(), n = curNeural();
   if(!PREP.t0) PREP.t0 = t0;
   if(kind === 'gpu'){
     const list = []; for(let i = B.start; i < B.end; i++) list.push({ text: doc.sentences[i].t });
@@ -1072,14 +1107,15 @@ async function prepStore(job, v, book, h){
   res.forEach((r, k) => { offs.push(o / sr); f32.set(r.audio, o); o += r.audio.length + pads[k]; });
   const dur = total / sr;
   const enc = await prepEncode(f32, sr);
-  const key = v.key + '|' + B.h;
-  const meta = { key, book, voice: v.key, h: B.h, offs, dur, sr, size: enc.data.byteLength };
+  const sh = sentHashes().slice(B.start, B.end), bh = sentHash(sh.join('.'));
+  const key = v.key + '|' + bh;
+  const meta = { key, book, books: [book], voice: v.key, h: bh, sh, offs, dur, sr, size: enc.data.byteLength };
   const db = await audioDB();
   const tx = db.transaction(['meta', 'mp3'], 'readwrite');
   tx.objectStore('mp3').put(new Blob([enc.data], { type: 'audio/mpeg' }), key);
   tx.objectStore('meta').put(meta);
   await idbDone(tx);
-  h.set(b, meta);
+  sh.forEach((x, k) => h.map.set(x, { m: meta, k }));
   for(let i = B.start; i < B.end; i++) if(i > idx + 1) NV.cache.delete(keyBase() + '|' + i);   // stored now: keep memory small
   applyStoredDur(v.key);
   PREP.wall += (performance.now() - t0) / 1000; PREP.audio += dur; job.dur = dur;
@@ -1088,12 +1124,18 @@ async function prepStore(job, v, book, h){
 async function audioDeleteBook(book, vkey){
   try{
     const db = await audioDB();
-    const metas = await idbVal(db.transaction('meta').objectStore('meta').index('book').getAll(book));
+    const metas = await idbVal(db.transaction('meta').objectStore('meta').getAll());
     const tx = db.transaction(['meta', 'mp3'], 'readwrite');
-    for(const m of metas) if(!vkey || m.voice === vkey){ tx.objectStore('meta').delete(m.key); tx.objectStore('mp3').delete(m.key); }
+    for(const m of metas){
+      if(vkey && m.voice !== vkey) continue;
+      const bs = m.books || (m.book ? [m.book] : []); if(!bs.includes(book)) continue;
+      const rest = bs.filter(x => x !== book);
+      if(rest.length){ m.books = rest; m.book = rest[0]; tx.objectStore('meta').put(m); }
+      else { tx.objectStore('meta').delete(m.key); tx.objectStore('mp3').delete(m.key); }
+    }
     await idbDone(tx);
   }catch(e){}
-  if(book === bookId()){ if(vkey) delete PB.have[vkey]; else PB.have = {}; PB.loading = {}; }
+  if(vkey) delete IX[vkey]; else for(const k in IX) delete IX[k];
 }
 /* keeps the app running while it prepares with a locked screen: a silent sound, like music apps */
 function prepKeep(on){
@@ -1120,7 +1162,7 @@ function prepUI(){
   const hide = () => { btn.hidden = true; const vc = $('#voicePrep'); if(vc) vc.hidden = true; };
   if(!bookId() || !neuralOK || (!n && !job)){ hide(); return; }
   btn.hidden = false;
-  if(!segBlocks().length){ hide(); return; }
+  if(!doc.sentences.length){ hide(); return; }
   const v = prepVoice();
   if(!haveNow(v.key)){ ensureHave(v.key).then(r => { if(r) prepUI(); }); }
   const s = prepStats(), other = n && v.key !== n.key ? ` (${v.name})` : '';
