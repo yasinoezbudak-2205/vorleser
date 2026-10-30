@@ -89,6 +89,10 @@ button:focus-visible,input:focus-visible,select:focus-visible,textarea:focus-vis
 
 /* generated cover */
 .cover{aspect-ratio:1/1;width:100%;max-width:100%;border-radius:10px;position:relative;overflow:hidden;color:#fff;box-shadow:0 6px 18px rgb(0 0 0 / .22);flex:none}
+.cover.pic{background:#111}
+.cover.pic img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;display:block}
+.cover-wrap{position:relative;display:flex;justify-content:center;width:100%}
+.cover-edit{position:absolute;right:calc(50% - min(50%, 22vh, 200px) + 10px);bottom:10px;font-size:12.5px;font-weight:600;color:#fff;background:rgb(0 0 0 / .55);backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px);border-radius:999px;padding:6px 11px}
 .cover .shape{position:absolute;border-radius:50%;background:rgb(255 255 255 / .13);box-shadow:0 0 0 14px rgb(255 255 255 / .05)}
 .cover .ct{position:absolute;left:9%;right:9%;bottom:9%;font-family:var(--f-display);font-weight:800;line-height:1.02;letter-spacing:-.02em;text-wrap:balance;hyphens:auto;-webkit-hyphens:auto;overflow-wrap:break-word;overflow:hidden;display:-webkit-box;-webkit-line-clamp:4;-webkit-box-orient:vertical;text-shadow:0 1px 10px rgb(0 0 0 / .18)}
 .cover .cl{position:absolute;left:9%;top:8%;font-family:var(--f-mono);font-size:10px;letter-spacing:.14em;text-transform:uppercase;opacity:.82}
@@ -283,7 +287,7 @@ textarea{min-height:130px;resize:vertical;font-family:var(--f-read)}
       <div class="seg" role="group" aria-label="Ansicht"><button type="button" id="viewCover" aria-pressed="true">Cover</button><button type="button" id="viewText" aria-pressed="false">Text</button></div>
     </div>
     <div class="stage">
-      <div class="stage-cover" id="stageCover"><div class="cover" id="bigCover"></div><div class="caption" id="caption"></div></div>
+      <div class="stage-cover" id="stageCover"><div class="cover-wrap"><div class="cover" id="bigCover"></div><button class="cover-edit" id="coverEdit" type="button" hidden>Cover ändern</button></div><div class="caption" id="caption"></div></div>
       <div class="stage-text" id="stageText" hidden><article id="reader"></article></div>
       <button class="follow" id="followBtn" type="button" hidden>Zur aktuellen Stelle</button>
     </div>
@@ -326,7 +330,7 @@ textarea{min-height:130px;resize:vertical;font-family:var(--f-read)}
       <button class="chip" type="button" data-expr="1.35" aria-pressed="false">Lebhaft</button>
     </div>
     <p class="sub" style="margin:14px 0 0;font-size:12px">KI-Stimmen: Pocket TTS von Kyutai (CC BY 4.0), für das Gerät umgewandelt. Hörbuch-Stimme: Piper. Zahlen werden vor dem Vorlesen ausgeschrieben.</p>
-    <div class="appver">App-Stand: <span id="appVer">30.10.2026, 13:39</span></div>
+    <div class="appver">App-Stand: <span id="appVer">30.10.2026, 14:04</span></div>
   </div>
 </div>
 
@@ -391,6 +395,7 @@ textarea{min-height:130px;resize:vertical;font-family:var(--f-read)}
   <div class="sheet-in"><div class="grab"></div>
     <h3 id="itemTitle"></h3><p class="sub" id="itemSub"></p>
     <div class="row"><button class="btn primary" id="itemPlay" type="button">Abspielen</button><button class="btn" id="itemRestart" type="button">Von vorn</button><button class="btn danger" id="itemDel" type="button">Entfernen</button></div>
+    <div class="row" style="margin-top:10px"><button class="btn" id="itemCover" type="button">Cover ändern</button><button class="btn" id="itemCoverDel" type="button" hidden>Eigenes Cover entfernen</button></div>
   </div>
 </div>
 
@@ -869,8 +874,13 @@ function audioDB(){
   if(PB.db) return PB.db;
   PB.db = new Promise((res, rej) => {
     if(!('indexedDB' in window)){ rej(new Error('Kein Speicher')); return; }
-    let r; try{ r = indexedDB.open('vorleser-audio', 1); }catch(e){ rej(e); return; }
-    r.onupgradeneeded = () => { const d = r.result; const m = d.createObjectStore('meta', { keyPath: 'key' }); m.createIndex('bv', ['book', 'voice']); m.createIndex('book', 'book'); d.createObjectStore('mp3'); };
+    let r; try{ r = indexedDB.open('vorleser-audio', 2); }catch(e){ rej(e); return; }
+    r.onupgradeneeded = () => {
+      const d = r.result;
+      if(!d.objectStoreNames.contains('meta')){ const m = d.createObjectStore('meta', { keyPath: 'key' }); m.createIndex('bv', ['book', 'voice']); m.createIndex('book', 'book'); }
+      if(!d.objectStoreNames.contains('mp3')) d.createObjectStore('mp3');
+      if(!d.objectStoreNames.contains('covers')) d.createObjectStore('covers');
+    };
     r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error);
   });
   PB.db.catch(() => { PB.db = null; });
@@ -1678,16 +1688,20 @@ function coverStyle(name){
   const sz = 55 + (h >> 8) % 45, x = (h >> 12) % 70 - 10, y = (h >> 16) % 50 - 20;
   return { bg: `linear-gradient(${ang}deg, ${a}, ${b})`, a, b, shape: `width:${sz}%;height:${sz}%;left:${x}%;top:${y}%` };
 }
-function coverHTML(name, label, fontPx){
+function coverHTML(name, label, fontPx, img){
+  if(img) return `<div class="cover pic"><img src="${img}" alt=""></div>`;
   const c = coverStyle(name);
   return `<div class="cover" lang="de" style="background:${c.bg}"><span class="shape" style="${c.shape}"></span><span class="cl">${esc(label || 'PDF')}</span><span class="ct" style="font-size:${fontPx || 17}px">${esc(name || '')}</span></div>`;
 }
-function setCover(el, name, label, fontPx){
+function setCover(el, name, label, fontPx, img){
+  if(img){ el.style.background = '#111'; el.classList.add('pic'); el.innerHTML = `<img src="${img}" alt="">`; return; }
+  el.classList.remove('pic');
   const c = coverStyle(name);
   el.style.background = c.bg; el.lang = 'de';
   el.innerHTML = `<span class="shape" style="${c.shape}"></span><span class="cl">${esc(label || 'PDF')}</span><span class="ct"${fontPx ? ` style="font-size:${fontPx}px"` : ''}>${esc(name || '')}</span>`;
 }
 function artworkURL(name){
+  const own = COV.map.get(doc.libId); if(own) return own;
   try{
     const c = coverStyle(name), cv = document.createElement('canvas'); cv.width = cv.height = 512;
     const g = cv.getContext('2d'), gr = g.createLinearGradient(0, 0, 512, 512);
@@ -1716,8 +1730,10 @@ function renderReader(){
 }
 function renderPlayerMeta(){
   shownCh = -1;
-  setCover($('#bigCover'), doc.name, doc.pages > 1 ? `${doc.pages} Seiten` : 'Text');
-  setCover($('#miniCover'), doc.name, '');
+  const own = COV.map.get(doc.libId);
+  setCover($('#bigCover'), doc.name, doc.pages > 1 ? `${doc.pages} Seiten` : 'Text', 0, own);
+  setCover($('#miniCover'), doc.name, '', 0, own);
+  $('#coverEdit').hidden = !doc.libId;
   $('#player').style.setProperty('--tint', coverStyle(doc.name).b);
   renderMini();
 }
@@ -1771,7 +1787,8 @@ function setPlayUI(){
     const ms = navigator.mediaSession; if(!ms) return;
     ms.playbackState = playing ? 'playing' : 'paused';
     if(playing && typeof MediaMetadata !== 'undefined'){
-      if(ms._doc !== doc.name){ ms._art = artworkURL(doc.name); ms._doc = doc.name; }
+      const ak = doc.name + '|' + (COV.map.get(doc.libId) || '').length;
+      if(ms._doc !== ak){ ms._art = artworkURL(doc.name); ms._doc = ak; }
       const c = doc.chapters.length > 1 ? doc.chapters[chapterOf(idx)] : null;
       ms.metadata = new MediaMetadata({ title: c ? c.title : (doc.name || 'PDF-Vorleser'), artist: c ? doc.name : voiceLabel(), album: 'PDF-Vorleser', artwork: ms._art ? [{ src: ms._art, sizes: '512x512', type: 'image/png' }] : [] });
     }
@@ -2125,6 +2142,7 @@ async function libInit(){
     renderLib(); return;
   }
   LIB.db = db; LIB.assets = assets; LIB.col = db.collection('library'); LIB.ready = true;
+  coversLoad();
   if(LIB.local){ try{ navigator.storage && navigator.storage.persist && navigator.storage.persist(); }catch(e){} }
   LIB.col.orderBy('updatedAt', 'desc').limit(300).onSnapshot(s => {
     LIB.docs = s.docs.map(d => ({ id: d.id, ...d.data() }));
@@ -2157,7 +2175,7 @@ function renderLib(){
       : (nc > 1 ? `${nc} Kapitel · neu` : d.pages > 1 ? `${d.pages} Seiten · neu` : 'neu');
     const ready = (prepJobs()[d.id] || {}).done ? ' · ✓ bereit' : '';
     h += `<div class="tile${doc.libId === d.id ? ' now' : ''}" role="button" tabindex="0" data-open="${esc(d.id)}">
-      ${coverHTML(d.name, d.pages > 1 ? `${d.pages} S.` : 'Text', 17)}
+      ${coverHTML(d.name, d.pages > 1 ? `${d.pages} S.` : 'Text', 17, COV.map.get(d.id))}
       <button class="tile-more" type="button" data-more="${esc(d.id)}" aria-label="Optionen für ${esc(d.name)}">${IC.more}</button>
       <span class="tile-name">${esc(d.name || 'Ohne Titel')}</span>
       <span class="tile-meta">${meta}${ready}</span>
@@ -2176,13 +2194,70 @@ function renderHero(){
   if(!d){ hero.hidden = true; return; }
   const st = itemStats(d);
   hero.hidden = false; hero.dataset.open = d.id;
-  hero.innerHTML = `${coverHTML(d.name, d.pages > 1 ? `${d.pages} S.` : 'Text', 13)}
+  hero.innerHTML = `${coverHTML(d.name, d.pages > 1 ? `${d.pages} S.` : 'Text', 13, COV.map.get(d.id))}
     <div class="hero-body">
       <span class="eyebrow">${(d.pos || 0) > 0 ? 'Weiterhören' : 'Als Nächstes'}</span>
       <span class="hero-title">${esc(d.name)}</span>
       <span class="hero-meta">${(d.chapters || 0) > 1 ? esc(d.chapterTitle ? chapPos(d.chapter || 0, d.chapters, d.chapterTitle, /^Abschnitt \d/.test(d.chapterTitle), true) : `Kapitel ${(d.chapter || 0) + 1} von ${d.chapters}`) : d.pages > 1 ? `Seite ${d.page || 1} von ${d.pages}` : 'Text'}${st.restSec != null ? ` · noch ca. ${durTxt(st.restSec)}` : ''}</span>
       <div class="hero-row"><span class="bar"><i style="width:${st.pct}%"></i></span><span class="playdot">${IC.play.replace(/26/g,'20')}</span></div>
     </div>`;
+}
+/* ---------- own covers ----------
+   A picture from the phone becomes the book's cover: fitted completely into the square (portrait covers are not
+   cut), on a darkened, blurred copy of itself. Stored on the device next to the prepared audio. */
+const COV = { map: new Map(), loaded: false };
+async function coversLoad(){
+  try{
+    const db = await audioDB();
+    const st = db.transaction('covers').objectStore('covers');
+    const [keys, vals] = await Promise.all([idbVal(st.getAllKeys()), idbVal(st.getAll())]);
+    keys.forEach((k, i) => COV.map.set(k, vals[i]));
+  }catch(e){}
+  COV.loaded = true;
+  renderLib(); if(doc.libId) renderPlayerMeta();
+}
+async function coverSet(id, url){
+  if(!id) return;
+  try{
+    const db = await audioDB(), tx = db.transaction('covers', 'readwrite');
+    url ? tx.objectStore('covers').put(url, id) : tx.objectStore('covers').delete(id);
+    await idbDone(tx);
+  }catch(e){ toast('Das Cover konnte nicht gespeichert werden.', true); return; }
+  url ? COV.map.set(id, url) : COV.map.delete(id);
+  renderLib(); if(doc.libId === id){ renderPlayerMeta(); setPlayUI(); }
+}
+function coverPick(id){
+  const inp = document.createElement('input'); inp.type = 'file'; inp.accept = 'image/*';
+  inp.onchange = async () => {
+    const f = inp.files && inp.files[0]; if(!f) return;
+    try{ await coverSet(id, await coverMake(f)); toast('Cover gespeichert.'); }
+    catch(e){ toast('Dieses Bild konnte nicht gelesen werden. Versuche ein JPG oder PNG.', true); }
+  };
+  inp.click();
+}
+function coverMake(file){
+  return new Promise((res, rej) => {
+    const url = URL.createObjectURL(file), img = new Image();
+    img.onload = () => {
+      try{
+        const S = 900, cv = document.createElement('canvas'); cv.width = cv.height = S;
+        const g = cv.getContext('2d'), w = img.naturalWidth, h = img.naturalHeight;
+        // background: the picture filling the square, blurred and darkened
+        const k = Math.max(S / w, S / h);
+        try{ g.filter = 'blur(28px)'; }catch(e){}
+        g.drawImage(img, (S - w * k) / 2, (S - h * k) / 2, w * k, h * k);
+        try{ g.filter = 'none'; }catch(e){}
+        g.fillStyle = 'rgba(0,0,0,.45)'; g.fillRect(0, 0, S, S);
+        // the whole picture on top
+        const f = Math.min(S / w, S / h);
+        g.drawImage(img, (S - w * f) / 2, (S - h * f) / 2, w * f, h * f);
+        URL.revokeObjectURL(url);
+        res(cv.toDataURL('image/jpeg', 0.86));
+      }catch(e){ URL.revokeObjectURL(url); rej(e); }
+    };
+    img.onerror = () => { URL.revokeObjectURL(url); rej(new Error('Bild')); };
+    img.src = url;
+  });
 }
 async function libRegister(){
   if(!LIB.ready || !doc.libId) return;
@@ -2258,7 +2333,7 @@ function libDelete(id){
     await LIB.col.doc(id).delete();
     if(d.textAsset && LIB.assets){ try{ await LIB.assets.delete(d.textAsset); }catch(e){} }
   });
-  setPrepJob(null, id); audioDeleteBook(id);
+  setPrepJob(null, id); audioDeleteBook(id); if(COV.map.has(id)) coverSet(id, null);
   toast(`„${d.name}“ entfernt.`);
 }
 
@@ -2315,6 +2390,7 @@ function openItem(id){
   $('#itemTitle').textContent = d.name;
   $('#itemSub').textContent = `${d.pages > 1 ? d.pages + ' Seiten · ' : ''}${(d.chapters || 0) > 1 ? `${(d.done || []).length} von ${d.chapters} Kapiteln abgeschlossen · ` : ''}${st.pct} % gehört${st.restSec != null ? ' · noch ca. ' + durTxt(st.restSec) : ''}${d.addedAt ? ' · hinzugefügt am ' + new Date(d.addedAt).toLocaleDateString('de-DE') : ''}`;
   $('#itemDel').textContent = 'Entfernen';
+  $('#itemCoverDel').hidden = !COV.map.has(id);
   openSheet('sheetItem');
 }
 $('#itemPlay').addEventListener('click', () => { const id = LIB.item; closeSheets(); if(engine() === 'neural') ensureCtx(); libOpen(id).then(() => { if(!playing) speakFrom(idx); }); });
@@ -2369,6 +2445,9 @@ $('#chapList').addEventListener('click', e => {
 });
 $('#speedBtn').addEventListener('click', () => openSheet('sheetSpeed'));
 $('#prepBtn').addEventListener('click', () => openSheet('sheetPrep'));
+$('#coverEdit').addEventListener('click', e => { e.stopPropagation(); coverPick(doc.libId); });
+$('#itemCover').addEventListener('click', () => { const id = LIB.item; closeSheets(); coverPick(id); });
+$('#itemCoverDel').addEventListener('click', () => { const id = LIB.item; closeSheets(); coverSet(id, null); toast('Eigenes Cover entfernt.'); });
 $('#voicePrep').addEventListener('click', () => openSheet('sheetPrep'));
 $('#prepGo').addEventListener('click', () => {
   const j = prepJob();
