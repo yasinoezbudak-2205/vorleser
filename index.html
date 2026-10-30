@@ -89,6 +89,9 @@ button:focus-visible,input:focus-visible,select:focus-visible,textarea:focus-vis
 
 /* generated cover */
 .cover{aspect-ratio:1/1;width:100%;max-width:100%;border-radius:10px;position:relative;overflow:hidden;color:#fff;box-shadow:0 6px 18px rgb(0 0 0 / .22);flex:none}
+[hidden]{display:none!important}
+.vh{position:absolute;left:-9999px;top:0;width:1px;height:1px;opacity:0;overflow:hidden}
+label.btn,label.cover-edit{cursor:pointer;display:inline-block;-webkit-user-select:none;user-select:none}
 .cover.pic{background:#111}
 .cover.pic img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;display:block}
 .cover-wrap{position:relative;display:flex;justify-content:center;width:100%}
@@ -287,7 +290,7 @@ textarea{min-height:130px;resize:vertical;font-family:var(--f-read)}
       <div class="seg" role="group" aria-label="Ansicht"><button type="button" id="viewCover" aria-pressed="true">Cover</button><button type="button" id="viewText" aria-pressed="false">Text</button></div>
     </div>
     <div class="stage">
-      <div class="stage-cover" id="stageCover"><div class="cover-wrap"><div class="cover" id="bigCover"></div><button class="cover-edit" id="coverEdit" type="button" hidden>Cover ändern</button></div><div class="caption" id="caption"></div></div>
+      <div class="stage-cover" id="stageCover"><div class="cover-wrap"><div class="cover" id="bigCover"></div><label class="cover-edit" id="coverEdit" for="coverFile" role="button" hidden>Cover ändern</label></div><div class="caption" id="caption"></div></div>
       <div class="stage-text" id="stageText" hidden><article id="reader"></article></div>
       <button class="follow" id="followBtn" type="button" hidden>Zur aktuellen Stelle</button>
     </div>
@@ -330,7 +333,7 @@ textarea{min-height:130px;resize:vertical;font-family:var(--f-read)}
       <button class="chip" type="button" data-expr="1.35" aria-pressed="false">Lebhaft</button>
     </div>
     <p class="sub" style="margin:14px 0 0;font-size:12px">KI-Stimmen: Pocket TTS von Kyutai (CC BY 4.0), für das Gerät umgewandelt. Hörbuch-Stimme: Piper. Zahlen werden vor dem Vorlesen ausgeschrieben.</p>
-    <div class="appver">App-Stand: <span id="appVer">30.10.2026, 14:04</span></div>
+    <div class="appver">App-Stand: <span id="appVer">30.10.2026, 14:09</span></div>
   </div>
 </div>
 
@@ -391,11 +394,12 @@ textarea{min-height:130px;resize:vertical;font-family:var(--f-read)}
   </div>
 </div>
 
+<input type="file" id="coverFile" accept="image/*" class="vh" tabindex="-1" aria-hidden="true">
 <div class="sheet" id="sheetItem" hidden role="dialog" aria-label="Eintrag">
   <div class="sheet-in"><div class="grab"></div>
     <h3 id="itemTitle"></h3><p class="sub" id="itemSub"></p>
     <div class="row"><button class="btn primary" id="itemPlay" type="button">Abspielen</button><button class="btn" id="itemRestart" type="button">Von vorn</button><button class="btn danger" id="itemDel" type="button">Entfernen</button></div>
-    <div class="row" style="margin-top:10px"><button class="btn" id="itemCover" type="button">Cover ändern</button><button class="btn" id="itemCoverDel" type="button" hidden>Eigenes Cover entfernen</button></div>
+    <div class="row" style="margin-top:10px"><label class="btn" id="itemCover" for="coverFile" role="button">Cover ändern</label><button class="btn" id="itemCoverDel" type="button" hidden>Eigenes Cover entfernen</button></div>
   </div>
 </div>
 
@@ -2226,16 +2230,32 @@ async function coverSet(id, url){
   url ? COV.map.set(id, url) : COV.map.delete(id);
   renderLib(); if(doc.libId === id){ renderPlayerMeta(); setPlayUI(); }
 }
-function coverPick(id){
-  const inp = document.createElement('input'); inp.type = 'file'; inp.accept = 'image/*';
-  inp.onchange = async () => {
-    const f = inp.files && inp.files[0]; if(!f) return;
-    try{ await coverSet(id, await coverMake(f)); toast('Cover gespeichert.'); }
-    catch(e){ toast('Dieses Bild konnte nicht gelesen werden. Versuche ein JPG oder PNG.', true); }
-  };
-  inp.click();
+/* the "Cover ändern" buttons are <label>s of one real file field: which book it is for is noted on tap */
+async function coverChosen(){
+  const inp = $('#coverFile'), f = inp.files && inp.files[0], id = COV.target;
+  COV.target = null;
+  if(!f || !id){ inp.value = ''; return; }
+  try{ await coverSet(id, await coverMake(f)); toast('Cover gespeichert.'); }
+  catch(e){ toast('Dieses Bild konnte nicht gelesen werden. Versuche ein anderes Foto.', true); }
+  inp.value = '';
 }
-function coverMake(file){
+async function coverMake(file){
+  try{
+    if(window.createImageBitmap){ const bmp = await createImageBitmap(file); return coverDraw(bmp, bmp.width, bmp.height); }
+  }catch(e){}
+  return coverMakeImg(file);
+}
+function coverDraw(img, w, h){
+  const S = 900, cv = document.createElement('canvas'); cv.width = cv.height = S;
+  const g = cv.getContext('2d'), k = Math.max(S / w, S / h), f = Math.min(S / w, S / h);
+  try{ g.filter = 'blur(28px)'; }catch(e){}
+  g.drawImage(img, (S - w * k) / 2, (S - h * k) / 2, w * k, h * k);
+  try{ g.filter = 'none'; }catch(e){}
+  g.fillStyle = 'rgba(0,0,0,.45)'; g.fillRect(0, 0, S, S);
+  g.drawImage(img, (S - w * f) / 2, (S - h * f) / 2, w * f, h * f);
+  return cv.toDataURL('image/jpeg', 0.86);
+}
+function coverMakeImg(file){
   return new Promise((res, rej) => {
     const url = URL.createObjectURL(file), img = new Image();
     img.onload = () => {
@@ -2445,8 +2465,9 @@ $('#chapList').addEventListener('click', e => {
 });
 $('#speedBtn').addEventListener('click', () => openSheet('sheetSpeed'));
 $('#prepBtn').addEventListener('click', () => openSheet('sheetPrep'));
-$('#coverEdit').addEventListener('click', e => { e.stopPropagation(); coverPick(doc.libId); });
-$('#itemCover').addEventListener('click', () => { const id = LIB.item; closeSheets(); coverPick(id); });
+$('#coverEdit').addEventListener('click', e => { e.stopPropagation(); COV.target = doc.libId; });
+$('#itemCover').addEventListener('click', () => { COV.target = LIB.item; setTimeout(closeSheets, 400); });
+$('#coverFile').addEventListener('change', coverChosen);
 $('#itemCoverDel').addEventListener('click', () => { const id = LIB.item; closeSheets(); coverSet(id, null); toast('Eigenes Cover entfernt.'); });
 $('#voicePrep').addEventListener('click', () => openSheet('sheetPrep'));
 $('#prepGo').addEventListener('click', () => {
