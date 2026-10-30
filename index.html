@@ -325,7 +325,7 @@ textarea{min-height:130px;resize:vertical;font-family:var(--f-read)}
       <button class="chip" type="button" data-expr="1.35" aria-pressed="false">Lebhaft</button>
     </div>
     <p class="sub" style="margin:14px 0 0;font-size:12px">Neue Stimmen: Pocket TTS von Kyutai (CC BY 4.0), für das Gerät umgewandelt. Hörbuch-Stimme: Piper.</p>
-    <div class="appver">App-Stand: <span id="appVer">30.10.2026, 12:46</span></div>
+    <div class="appver">App-Stand: <span id="appVer">30.10.2026, 13:06</span></div>
   </div>
 </div>
 
@@ -1270,18 +1270,36 @@ function bodyHeight(pages){
   for(const [h, n] of m) if(n > bn){ bn = n; best = h; }
   return best;
 }
-function paragraphize(lines, bodyH){
+/* the font size the document uses for its chapter headings (learned from "Kapitel 3", "Prolog", …), when it
+   differs from the body text; headings may be larger or smaller than the text */
+function headingHeight(pages, bodyH){
+  const m = new Map();
+  for(const lines of pages) for(const l of lines){
+    if(!isKw(l.t) || l.t.length > 60) continue;
+    const h = Math.round(l.h * 10) / 10;
+    if(Math.abs(h - bodyH) > bodyH * 0.05) m.set(h, (m.get(h) || 0) + 1);
+  }
+  let best = null, bn = 1;
+  for(const [h, n] of m) if(n > bn){ bn = n; best = h; }
+  return best;
+}
+function paragraphize(lines, bodyH, headH){
   if(!lines.length) return [];
   const gaps = [];
   for(let i=1;i<lines.length;i++){ const g = lines[i-1].y - lines[i].y; if(g > 0) gaps.push(g); }
   gaps.sort((a,b) => a-b);
   const med = gaps.length ? gaps[Math.floor(gaps.length/2)] : 12;
   const maxLen = Math.max(...lines.map(l => l.t.length));
-  const ends = t => /[.!?:]["”»)]?$/.test(t);
+  const ends = t => /[.!?:…]["”“»«'’)]?$/.test(t);
   const out = []; let cur = null;
+  const styled = l => headH && Math.abs(l.h - headH) < 0.25 && l.t.length <= 60 && !/[.,;:!?]$/.test(l.t) && /\p{L}/u.test(l.t);
   for(let i=0;i<lines.length;i++){
     const l = lines[i], prev = lines[i-1];
-    const hl = bodyH ? headLine(l, bodyH, !prev || prev.head || ends(prev.t)) : null;
+    const hl = styled(l) ? { r: l.h / (bodyH || l.h), kw: true } : bodyH ? headLine(l, bodyH, !prev || prev.head || ends(prev.t)) : null;
+    // a short line in its own style right under a heading is its subtitle ("Kapitel 1" / "Gelbe Tage")
+    if(!hl && cur && cur.head && !cur.sub && prev && prev.head && bodyH && Math.abs(l.h - bodyH) > bodyH * 0.05 && l.t.length <= 70 && !/[,;]$/.test(l.t) && prev.y - l.y > 0 && prev.y - l.y < Math.max(l.h, prev.h) * 2.6){
+      cur.sub = l.t; l.head = true; continue;
+    }
     if(hl){
       l.head = true;
       const g = prev ? prev.y - l.y : 0;
@@ -1296,6 +1314,7 @@ function paragraphize(lines, bodyH){
     if(brk){ out.push(cur); cur = { text: l.t, y: l.y }; } else cur.text = joinLine(cur.text, l.t);
   }
   if(cur) out.push(cur);
+  for(const p of out) if(p.head && p.sub){ p.disp = p.text + ' · ' + p.sub; p.text = p.text.replace(/[:.\s]+$/, '') + '. ' + p.sub; delete p.sub; }
   return out.map(p => ({ ...p, text: p.text.replace(/\s?(\.\s?){4,}/g, ' – ').replace(/\s+/g,' ').trim() })).filter(p => /[\p{L}\d]/u.test(p.text));
 }
 function pickHeadings(paras){
@@ -1307,7 +1326,7 @@ function pickHeadings(paras){
   for(const b of levels){ if(heads.filter(h => h.kw || lv(h) >= b).length >= 3){ T = b; break; } }
   let chosen = heads.filter(h => h.kw || lv(h) >= T);
   if(chosen.length > 160) chosen = heads.filter(h => h.kw);
-  chosen.forEach(h => { h.h = 1; });
+  chosen.forEach(h => { h.h = 1; if(h.disp) h.ch = h.disp; });
 }
 async function outlineMarks(pdf){
   let ol = null;
@@ -1544,9 +1563,9 @@ async function loadPdf(file){
     if(n % 4 === 0) await new Promise(r => setTimeout(r, 0));
   }
   if(skip) pages = stripHeaders(pages);
-  const bodyH = bodyHeight(pages);
+  const bodyH = bodyHeight(pages), headH = headingHeight(pages, bodyH);
   const parsed = [];
-  pages.forEach((lines, i) => paragraphize(lines, bodyH).forEach(p => parsed.push({ ...p, page: i + 1 })));
+  pages.forEach((lines, i) => paragraphize(lines, bodyH, headH).forEach(p => parsed.push({ ...p, page: i + 1 })));
   loadStatus('Suche Kapitel …');
   const marks = await outlineMarks(pdf);
   if(!(marks && applyOutline(parsed, marks) >= 2)){ parsed.forEach(p => { delete p.ch; p.h = 0; }); pickHeadings(parsed); }
